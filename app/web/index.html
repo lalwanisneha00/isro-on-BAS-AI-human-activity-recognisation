@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BAS Crew Activity Recognition</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230B0E17'/%3E%3Ccircle cx='16' cy='9' r='3.4' fill='%2300D9FF'/%3E%3Cpath d='M16 13v9M16 15l-6 4M16 15l6 4M16 22l-4.5 7M16 22l4.5 7' stroke='%2300D9FF' stroke-width='2.4' stroke-linecap='round' fill='none'/%3E%3C/svg%3E" />
+  <meta name="description" content="Onboard crew activity recognition console for the Bharatiya Antariksh Station." />
+  <meta name="color-scheme" content="dark" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="mission-bar">
+    <div class="mission-id">
+      <span class="badge">ISRO</span>
+      <div class="mission-text">
+        <h1 id="mission-name">Bharatiya Antariksh Station</h1>
+        <p id="module-name">Crew Activity Recognition</p>
+      </div>
+    </div>
+
+    <div class="mission-meta">
+      <div class="meta-block">
+        <span class="meta-label">Feed</span>
+        <span class="meta-value" id="feed-state">Connecting</span>
+      </div>
+      <div class="meta-block">
+        <span class="meta-label">Crew Tracked</span>
+        <span class="meta-value" id="pose-state">0</span>
+      </div>
+      <div class="meta-block">
+        <span class="meta-label">Rate</span>
+        <span class="meta-value mono" id="fps-value">--.- fps</span>
+      </div>
+      <div class="meta-block">
+        <span class="meta-label">Mission Clock</span>
+        <span class="meta-value mono" id="clock">--:--:--</span>
+      </div>
+      <div class="mode-switch" id="mode-switch" role="group" aria-label="Video source">
+        <button type="button" class="mode-btn is-on" id="mode-live">Live Camera</button>
+        <button type="button" class="mode-btn" id="mode-demo">Demo Mode</button>
+      </div>
+      <div class="live-pill" id="live-pill">
+        <span class="dot"></span><span id="live-label">STANDBY</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="alert-banner" id="alert-banner" hidden>
+    <span class="alert-icon" aria-hidden="true">&#9888;</span>
+    <div class="alert-text">
+      <strong>ANOMALY DETECTED &mdash; NO CREW MOTION</strong>
+      <span id="alert-detail">Crew member has been motionless</span>
+    </div>
+    <span class="mono alert-timer" id="alert-timer">0s</span>
+  </div>
+
+  <main class="stage">
+    <div class="main-column">
+      <section class="video-panel">
+      <div class="panel-head">
+        <h2>Crew Cabin Camera 01</h2>
+        <span class="mono" id="panel-detail">Initialising capture device</span>
+      </div>
+      <div class="video-frame">
+        <img id="video" src="/video" alt="Live crew cabin camera feed" />
+        <div class="demo-badge" id="demo-badge" hidden>
+          <span class="demo-dot"></span>SIMULATED FEED
+          <span class="mono" id="demo-progress">0s / 0s</span>
+        </div>
+        <div class="corner tl"></div><div class="corner tr"></div>
+        <div class="corner bl"></div><div class="corner br"></div>
+      </div>
+      </section>
+
+      <section class="timeline-section">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Activity Timeline</h2>
+            <span class="mono" id="timeline-range">Last 5 minutes</span>
+          </div>
+          <div class="timeline" id="timeline"></div>
+          <div class="timeline-axis" id="timeline-axis"></div>
+        </div>
+      </section>
+
+      <section class="log-section">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Activity Log</h2>
+          <span class="mono" id="log-status">0 entries</span>
+        </div>
+        <div class="table-wrap">
+          <table class="log-table">
+            <thead>
+              <tr>
+                <th>Time</th><th>Crew</th><th>Activity</th>
+                <th class="num">Duration</th><th class="num">Conf.</th>
+              </tr>
+            </thead>
+            <tbody id="log-body">
+              <tr class="empty-row"><td colspan="5">No activity segments recorded yet</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="log-path mono" id="log-path">Writing to logs/</p>
+        </div>
+      </section>
+    </div>
+    <aside class="side-panel">
+      <div class="panel activity-panel" id="activity-panel">
+        <div class="panel-head">
+          <h2>Crew Roster</h2>
+          <span class="mono" id="crew-count">0 / 6</span>
+        </div>
+        <div class="roster" id="roster">
+          <p class="roster-empty" id="roster-empty">No crew detected in the module</p>
+        </div>
+        <div class="score-head">
+          <span id="score-title">Activity scores</span>
+        </div>
+        <div class="score-list" id="score-list"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Cumulative Time</h2>
+          <span class="mono" id="chart-total">0s</span>
+        </div>
+        <div class="chart" id="chart"></div>
+        <p class="chart-note">Session totals, fixed activity order</p>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Normalisation Telemetry</h2>
+          <span class="mono" id="buffer-tag">0/48</span>
+        </div>
+
+        <div class="norm-view">
+          <canvas id="norm-canvas" width="220" height="240"></canvas>
+          <p class="caption">Body-local reference frame</p>
+        </div>
+
+        <div class="readout-group">
+          <p class="group-title">Raw camera values <em>these should move</em></p>
+          <div class="readout"><span>Torso length</span><b class="mono" id="t-torso">--</b></div>
+          <div class="readout"><span>Hip centre X</span><b class="mono" id="t-hipx">--</b></div>
+          <div class="readout"><span>Hip centre Y</span><b class="mono" id="t-hipy">--</b></div>
+          <div class="readout"><span>Spine tilt</span><b class="mono" id="t-spine">--</b></div>
+        </div>
+
+        <div class="readout-group locked">
+          <p class="group-title">Normalised <em>these must hold steady</em></p>
+          <div class="readout"><span>Shoulder X</span><b class="mono" id="t-shx">--</b></div>
+          <div class="readout"><span>Shoulder Y</span><b class="mono" id="t-shy">--</b></div>
+          <div class="readout"><span>Anchor conf.</span><b class="mono" id="t-conf">--</b></div>
+        </div>
+
+        <div class="buffer-block">
+          <div class="readout"><span>Rolling window</span><b class="mono" id="t-span">0.00 s</b></div>
+          <div class="buffer-bar"><div class="buffer-fill" id="buffer-fill"></div></div>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <footer class="status-bar">
+    <span class="mono">BAS CREW MONITOR &middot; OPERATIONAL</span>
+    <span class="mono">LANDMARKS: <span id="landmark-count">0</span>/33</span>
+    <span class="mono">INFERENCE: <span id="latency">--</span> MS</span>
+    <span class="mono">WINDOW: <span id="window-state">FILLING</span></span>
+    <span class="mono">CLASSIFIER: RULE-BASED v1</span>
+  </footer>
+
+  <div class="tooltip" id="tooltip" hidden></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

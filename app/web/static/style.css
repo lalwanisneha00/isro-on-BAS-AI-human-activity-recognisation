@@ -1,0 +1,986 @@
+:root {
+  --bg: #0B0E17;
+  --panel: #111726;
+  --panel-edge: #1E2940;
+  --accent: #00D9FF;
+  --accent-dim: rgba(0, 217, 255, 0.15);
+  --alert: #FFB020;
+  --text: #E6EDF7;
+  --text-dim: #7C8AA5;
+  /* System fonts only. Loading a webfont would mean a network request at
+     runtime, and this console has to work with the network unplugged. */
+  --sans: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system,
+          "Helvetica Neue", Arial, sans-serif;
+  --mono: "Cascadia Mono", "Cascadia Code", Consolas,
+          "DejaVu Sans Mono", ui-monospace, monospace;
+}
+
+* { box-sizing: border-box; }
+
+/* Panels that use display:flex would otherwise ignore the hidden attribute
+   entirely - which left the anomaly banner on screen permanently. */
+[hidden] { display: none !important; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(1100px 600px at 50% -10%, #131C2E 0%, transparent 70%),
+    var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  display: flex;
+  flex-direction: column;
+}
+
+.mono { font-family: var(--mono); letter-spacing: 0.04em; }
+
+/* ------------------------------------------------------------- header ---- */
+.mission-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 14px 26px;
+  border-bottom: 1px solid var(--panel-edge);
+  background: linear-gradient(180deg, rgba(0, 217, 255, 0.05), transparent);
+}
+
+.mission-id { display: flex; align-items: center; gap: 14px; }
+
+.badge {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: var(--accent);
+  border: 1px solid rgba(0, 217, 255, 0.45);
+  border-radius: 4px;
+  padding: 7px 10px;
+  background: var(--accent-dim);
+}
+
+.mission-text h1 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.mission-text p {
+  margin: 3px 0 0;
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.mission-meta { display: flex; align-items: center; gap: 26px; }
+
+.meta-block { display: flex; flex-direction: column; gap: 4px; }
+
+.meta-label {
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.meta-value { font-size: 13px; font-weight: 500; }
+
+/* live indicator */
+.live-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 13px;
+  border-radius: 999px;
+  border: 1px solid var(--panel-edge);
+  background: rgba(255, 255, 255, 0.02);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  color: var(--text-dim);
+  transition: color 0.35s ease, border-color 0.35s ease;
+}
+
+.live-pill .dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  transition: background 0.35s ease;
+}
+
+.live-pill.online { color: var(--accent); border-color: rgba(0, 217, 255, 0.4); }
+.live-pill.online .dot { background: var(--accent); animation: pulse 1.8s infinite; }
+.live-pill.offline { color: var(--alert); border-color: rgba(255, 176, 32, 0.4); }
+.live-pill.offline .dot { background: var(--alert); animation: pulse 1.1s infinite; }
+
+@keyframes pulse {
+  0%   { box-shadow: 0 0 0 0 currentColor; opacity: 1; }
+  70%  { box-shadow: 0 0 0 7px transparent; opacity: 0.65; }
+  100% { box-shadow: 0 0 0 0 transparent; opacity: 1; }
+}
+
+/* -------------------------------------------------------------- stage ---- */
+.stage {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 20px;
+  padding: 22px 26px;
+  max-width: 1640px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.video-panel,
+.panel {
+  border: 1px solid var(--panel-edge);
+  border-radius: 10px;
+  background: var(--panel);
+  overflow: hidden;
+}
+
+.video-panel { flex: 1 1 auto; max-width: 900px; }
+
+.side-panel { flex: 0 0 322px; }
+
+.panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--panel-edge);
+}
+
+.panel-head h2 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+
+.panel-head span { font-size: 11px; color: var(--text-dim); }
+
+.video-frame { position: relative; background: #05070C; line-height: 0; }
+
+/* Capped so the timeline, chart and log stay on screen with the video -
+   a mission console is read all at once, not scrolled. */
+.video-frame img {
+  width: 100%;
+  height: auto;
+  max-height: 46vh;
+  object-fit: contain;
+  display: block;
+  margin: 0 auto;
+}
+
+/* framing brackets around the feed */
+.corner {
+  position: absolute;
+  width: 22px; height: 22px;
+  border: 2px solid var(--accent);
+  opacity: 0.55;
+}
+.corner.tl { top: 10px; left: 10px;  border-right: 0; border-bottom: 0; }
+.corner.tr { top: 10px; right: 10px; border-left: 0;  border-bottom: 0; }
+.corner.bl { bottom: 10px; left: 10px;  border-right: 0; border-top: 0; }
+.corner.br { bottom: 10px; right: 10px; border-left: 0;  border-top: 0; }
+
+/* ---------------------------------------------------------- status bar --- */
+.status-bar {
+  display: flex;
+  gap: 32px;
+  padding: 10px 26px;
+  border-top: 1px solid var(--panel-edge);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+
+/* pose tracking state colours */
+.tag-ok   { color: var(--accent); }
+.tag-wait { color: var(--text-dim); }
+.tag-bad  { color: var(--alert); }
+
+/* ------------------------------------------------- normalisation panel --- */
+.norm-view {
+  padding: 14px 0 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  border-bottom: 1px solid var(--panel-edge);
+  background:
+    linear-gradient(rgba(0, 217, 255, 0.03), transparent);
+}
+
+#norm-canvas { display: block; }
+
+.caption {
+  margin: 6px 0 0;
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.readout-group { padding: 12px 16px; border-bottom: 1px solid var(--panel-edge); }
+
+.group-title {
+  margin: 0 0 9px;
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.group-title em {
+  font-style: normal;
+  display: block;
+  margin-top: 3px;
+  letter-spacing: 0.08em;
+  text-transform: none;
+  font-size: 10px;
+  color: #4E5C75;
+}
+
+.readout-group.locked .group-title em { color: rgba(0, 217, 255, 0.6); }
+
+.readout {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 0;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.readout b { font-size: 12px; font-weight: 500; color: var(--text); }
+
+.readout-group.locked .readout b { color: var(--accent); }
+
+/* rolling window fill */
+.buffer-block { padding: 12px 16px 16px; }
+
+.buffer-bar {
+  margin-top: 8px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+
+.buffer-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: 2px;
+  background: linear-gradient(90deg, rgba(0, 217, 255, 0.4), var(--accent));
+  transition: width 0.25s ease;
+}
+
+@media (max-width: 1180px) {
+  .stage { flex-direction: column; align-items: center; }
+  .side-panel { flex: 1 1 auto; width: min(900px, 100%); }
+}
+
+/* ------------------------------------------------------- activity panel --- */
+.side-panel { display: flex; flex-direction: column; gap: 20px; }
+
+.activity-panel {
+  border-color: rgba(0, 217, 255, 0.30);
+  transition: border-color 0.5s ease, box-shadow 0.5s ease;
+}
+
+.activity-body { padding: 16px; border-bottom: 1px solid var(--panel-edge); }
+
+.activity-label {
+  margin: 0 0 14px;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: 0.01em;
+  color: var(--accent);
+  transition: color 0.5s ease;
+}
+
+.conf-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 7px;
+}
+
+.conf-tag {
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.conf-row b { font-size: 15px; color: var(--text); }
+
+.conf-bar {
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+
+.conf-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: 3px;
+  background: var(--accent);
+  transition: width 0.4s ease, background 0.5s ease;
+}
+
+/* per-activity score bars */
+.score-list { padding: 12px 16px 16px; }
+
+.score-row {
+  display: grid;
+  grid-template-columns: 1fr 34px;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 7px;
+}
+
+.score-name {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.score-row.leading .score-name { color: var(--text); }
+
+.score-track {
+  grid-column: 1 / -1;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.05);
+  overflow: hidden;
+  margin-top: -3px;
+}
+
+.score-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: 2px;
+  background: rgba(0, 217, 255, 0.35);
+  transition: width 0.3s ease, background 0.3s ease;
+}
+
+.score-row.leading + .score-track .score-fill { background: var(--accent); }
+
+.score-value {
+  font-family: var(--mono);
+  font-size: 10px;
+  text-align: right;
+  color: var(--text-dim);
+}
+
+/* anomaly styling, reserved strictly for the alert state */
+.activity-panel.alert { border-color: rgba(255, 176, 32, 0.55); }
+.activity-panel.alert .activity-label { color: var(--alert); }
+.activity-panel.alert .conf-fill { background: var(--alert); }
+
+/* ------------------------------------------------------------ log table --- */
+.main-column {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.video-panel { max-width: none; }
+
+.table-wrap { max-height: 232px; overflow-y: auto; }
+
+.log-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.log-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 9px 16px;
+  text-align: left;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  background: #0E1421;
+  border-bottom: 1px solid var(--panel-edge);
+}
+
+.log-table td {
+  padding: 9px 16px;
+  border-bottom: 1px solid rgba(30, 41, 64, 0.55);
+  color: var(--text);
+}
+
+.log-table .num { text-align: right; }
+
+.log-table tbody tr:hover td { background: rgba(0, 217, 255, 0.04); }
+
+.log-table .cell-time,
+.log-table .cell-duration,
+.log-table .cell-conf {
+  font-family: var(--mono);
+  color: var(--text-dim);
+}
+
+.log-table .cell-activity { font-weight: 500; }
+
+/* a coloured rule marking which activity the row records */
+.log-table .cell-activity::before {
+  content: "";
+  display: inline-block;
+  width: 3px;
+  height: 11px;
+  margin-right: 9px;
+  vertical-align: -1px;
+  border-radius: 2px;
+  background: var(--row-colour, var(--text-dim));
+}
+
+.log-table .empty-row td {
+  padding: 26px 16px;
+  text-align: center;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.log-table tr.new-row td { animation: row-in 0.7s ease; }
+
+@keyframes row-in {
+  from { background: rgba(0, 217, 255, 0.14); }
+  to   { background: transparent; }
+}
+
+.log-path {
+  margin: 0;
+  padding: 9px 16px;
+  border-top: 1px solid var(--panel-edge);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+
+.log-path.fault { color: var(--alert); }
+
+/* =========================================================================
+   Data visualisation
+   Series colours are the six validated categorical slots; Anomaly is a
+   reserved status amber so an alert never reads as one more activity.
+   ========================================================================= */
+:root {
+  --series-exercise:    #3987e5;
+  --series-experiment:  #d95926;
+  --series-eating:      #199e70;
+  --series-maintenance: #c98500;
+  --series-idle:        #d55181;
+  --series-transit:     #008300;
+  --status-anomaly:     #fab219;
+  --series-none:        #6E7686;
+}
+
+/* ----------------------------------------------------------- timeline ---- */
+/* One lane per activity. Identity comes from the labelled lane, not from
+   telling two colours apart, which is what keeps this readable for
+   colour-vision deficiency and in greyscale. */
+.timeline { padding: 12px 16px 4px; }
+
+.lane {
+  display: grid;
+  grid-template-columns: 116px 1fr;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 3px;
+}
+
+.lane-name {
+  font-size: 9.5px;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.lane-swatch {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--lane-colour, var(--series-none));
+}
+
+.lane-track {
+  position: relative;
+  height: 15px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.035);
+  overflow: hidden;
+}
+
+.lane.active .lane-name { color: var(--text); }
+.lane.active .lane-track { background: rgba(255, 255, 255, 0.06); }
+
+.block {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  min-width: 2px;
+  border-radius: 3px;
+  background: var(--lane-colour, var(--series-none));
+  /* A 2px surface gap keeps touching blocks from reading as one. */
+  box-shadow: 0 0 0 1.5px var(--panel);
+  cursor: default;
+  transition: filter 0.15s ease;
+}
+
+.block:hover { filter: brightness(1.25); }
+
+.block.live {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  animation: live-edge 1.8s ease-in-out infinite;
+}
+
+@keyframes live-edge {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.72; }
+}
+
+.timeline-axis {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 16px 12px;
+  margin-left: 126px;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: #4E5C75;
+  border-top: 1px solid rgba(30, 41, 64, 0.5);
+  padding-top: 7px;
+}
+
+/* -------------------------------------------------------------- chart ---- */
+/* Horizontal bars, fixed activity order - never sorted by value, so a
+   colour always means the same activity and neighbours stay distinguishable.
+   Every bar is directly labelled, so colour is reinforcement, not the key. */
+.chart { padding: 14px 16px 6px; }
+
+.bar-row { margin-bottom: 9px; }
+
+.bar-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.bar-name {
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bar-row.has-data .bar-name { color: var(--text); }
+
+.bar-value {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.bar-row.has-data .bar-value { color: var(--text); }
+
+.bar-track {
+  height: 7px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.05);
+  overflow: hidden;
+}
+
+.bar-fill {
+  height: 100%;
+  width: 0%;
+  /* 4px rounded data-end, anchored flat to the baseline at the left. */
+  border-radius: 0 4px 4px 0;
+  background: var(--bar-colour, var(--series-none));
+  transition: width 0.5s ease;
+}
+
+.chart-note {
+  margin: 0;
+  padding: 8px 16px 13px;
+  border-top: 1px solid var(--panel-edge);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #4E5C75;
+}
+
+/* ------------------------------------------------------------ tooltip ---- */
+.tooltip {
+  position: fixed;
+  z-index: 50;
+  pointer-events: none;
+  padding: 7px 10px;
+  border: 1px solid var(--panel-edge);
+  border-radius: 5px;
+  background: #0A0E18;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55);
+  font-size: 11px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.tooltip .tip-activity {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 600;
+  margin-bottom: 3px;
+}
+
+.tooltip .tip-swatch {
+  width: 8px; height: 8px;
+  border-radius: 2px;
+  background: var(--tip-colour, var(--series-none));
+}
+
+.tooltip .tip-detail {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+@media (max-width: 1280px) {
+  .stage { flex-direction: column; align-items: stretch; }
+  .side-panel { flex: 1 1 auto; width: 100%; }
+}
+
+/* ------------------------------------------------------- anomaly alert --- */
+/* Amber is reserved for this state and nothing else, so its appearance on
+   screen can only ever mean one thing. */
+.alert-banner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 11px 26px;
+  background: linear-gradient(90deg,
+              rgba(250, 178, 25, 0.18), rgba(250, 178, 25, 0.05));
+  border-top: 1px solid rgba(250, 178, 25, 0.35);
+  border-bottom: 1px solid rgba(250, 178, 25, 0.35);
+  animation: alert-in 0.4s ease, alert-glow 2.2s ease-in-out infinite 0.4s;
+}
+
+@keyframes alert-in {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: none; }
+}
+
+@keyframes alert-glow {
+  0%, 100% { background: linear-gradient(90deg,
+             rgba(250, 178, 25, 0.18), rgba(250, 178, 25, 0.05)); }
+  50%      { background: linear-gradient(90deg,
+             rgba(250, 178, 25, 0.30), rgba(250, 178, 25, 0.09)); }
+}
+
+.alert-icon { font-size: 19px; color: var(--status-anomaly); }
+
+.alert-text { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+
+.alert-text strong {
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  color: var(--status-anomaly);
+}
+
+.alert-text span { font-size: 11px; color: #C9A96A; }
+
+.alert-timer {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--status-anomaly);
+}
+
+/* The whole console shifts to the alert accent while an anomaly stands. */
+body.anomaly .video-panel { border-color: rgba(250, 178, 25, 0.45); }
+body.anomaly .corner { border-color: var(--status-anomaly); opacity: 0.8; }
+
+/* --------------------------------------------------------- mode switch --- */
+.mode-switch {
+  display: flex;
+  padding: 3px;
+  gap: 3px;
+  border: 1px solid var(--panel-edge);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.mode-btn {
+  padding: 6px 12px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-dim);
+  font-family: var(--sans);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.09em;
+  cursor: pointer;
+  transition: background 0.25s ease, color 0.25s ease;
+}
+
+.mode-btn:hover { color: var(--text); }
+
+.mode-btn.is-on {
+  background: var(--accent-dim);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px rgba(0, 217, 255, 0.35);
+}
+
+.mode-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* --------------------------------------------------- simulated badge ----- */
+.demo-badge {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 13px;
+  border: 1px solid rgba(0, 217, 255, 0.4);
+  border-radius: 999px;
+  background: rgba(11, 14, 23, 0.85);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.19em;
+  color: var(--accent);
+  z-index: 3;
+}
+
+.demo-badge .mono {
+  font-weight: 400;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.demo-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: pulse 1.8s infinite;
+}
+
+/* ---------------------------------------------------------- crew roster --- */
+.roster { padding: 10px 12px; border-bottom: 1px solid var(--panel-edge); }
+
+.roster-empty {
+  margin: 0;
+  padding: 20px 4px;
+  text-align: center;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--text-dim);
+}
+
+.crew-row {
+  display: grid;
+  grid-template-columns: 44px 1fr 52px;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px;
+  margin-bottom: 4px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
+  font-family: var(--sans);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.crew-row:hover { background: rgba(255, 255, 255, 0.05); }
+
+.crew-row.is-selected {
+  border-color: rgba(0, 217, 255, 0.35);
+  background: rgba(0, 217, 255, 0.06);
+}
+
+.crew-row.is-hidden-crew { opacity: 0.45; }
+
+.crew-tag {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-align: center;
+  padding: 4px 0;
+  border-radius: 4px;
+  color: var(--crew-colour, var(--text-dim));
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.crew-body { min-width: 0; display: block; }
+
+.crew-activity {
+  display: block;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--crew-colour, var(--text));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color 0.4s ease;
+}
+
+.crew-bar {
+  display: block;
+  height: 3px;
+  margin-top: 5px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.07);
+  overflow: hidden;
+}
+
+.crew-fill {
+  display: block;
+  height: 100%;
+  width: 0%;
+  border-radius: 2px;
+  background: var(--crew-colour, var(--accent));
+  transition: width 0.4s ease;
+}
+
+.crew-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.crew-meta b { font-size: 11px; font-weight: 600; color: var(--text); }
+.crew-meta i { font-style: normal; font-size: 9px; color: var(--text-dim); }
+
+/* A crew member in the anomaly state is unmissable in the roster. */
+.crew-row.is-alert {
+  border-color: rgba(250, 178, 25, 0.55);
+  background: rgba(250, 178, 25, 0.08);
+  animation: alert-glow 2.2s ease-in-out infinite;
+}
+
+.score-head {
+  padding: 10px 16px 0;
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.log-table .cell-crew { color: var(--text-dim); font-size: 10px; }
+
+/* ------------------------------------------------------- final polish ---- */
+
+/* The console is a fixed instrument panel: text selection and stray
+   highlights on controls make it feel like a document instead. */
+.mission-bar, .panel-head, .status-bar, .lane-name, .mode-btn {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.mode-btn:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Panels arrive rather than snapping in, which reads as instruments coming
+   online instead of a page repainting. */
+.panel, .video-panel {
+  animation: panel-in 0.45s ease both;
+}
+
+.side-panel .panel:nth-child(2) { animation-delay: 0.06s; }
+.side-panel .panel:nth-child(3) { animation-delay: 0.12s; }
+.timeline-section { animation-delay: 0.09s; }
+.log-section { animation-delay: 0.15s; }
+
+@keyframes panel-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* An activity change should read as a transition, not a jump cut. */
+.roster-activity,
+.activity-label,
+.roster-row {
+  transition: color 0.45s ease, border-color 0.45s ease,
+              background 0.45s ease;
+}
+
+.conf-fill, .roster-conf-fill {
+  transition: width 0.45s ease, background 0.45s ease;
+}
+
+/* Empty states, so a panel with no data yet still looks deliberate. */
+.awaiting {
+  padding: 20px 16px;
+  text-align: center;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #46536B;
+}
+
+/* Scrollbars in the log table, matched to the console rather than the OS. */
+.table-wrap::-webkit-scrollbar { width: 9px; }
+.table-wrap::-webkit-scrollbar-track { background: transparent; }
+.table-wrap::-webkit-scrollbar-thumb {
+  border-radius: 5px;
+  background: #223049;
+  border: 2px solid var(--panel);
+}
+.table-wrap::-webkit-scrollbar-thumb:hover { background: #2E4062; }
+
+/* Respect a viewer who has asked for less motion. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* Printing the console should produce a legible report, not a black page. */
+@media print {
+  body { background: #fff; color: #000; }
+  .video-panel, .mode-switch, .live-pill { display: none !important; }
+  .panel { border-color: #bbb; background: #fff; }
+  .log-table td, .log-table th { color: #000; }
+}

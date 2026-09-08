@@ -1,0 +1,28 @@
+# Written while the console runs
+logs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Recorded footage of real people.
+#
+# The keypoint tracks (.npz) are shared: they are skeleton coordinates, they
+# are what the evaluation actually uses, and they identify nobody. The video
+# the clips were cut from stays on the machine that recorded it - this is a
+# public repository, and nobody should have to publish footage of themselves
+# to contribute training data.
+dataset/**/*.mp4
+
+# Saved evaluation runs are local scratch, not project history.
+dataset/_results/
