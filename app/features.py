@@ -28,6 +28,10 @@ class MotionFeatures:
                  "periodicity", "cycle_hz", "wrist_range",
                  "head_zone_fraction", "workstation_fraction", "elevated_fraction",
                  "extended_fraction", "wrist_spread", "vertical_swing",
+                 "head_pitch", "head_down_fraction", "shoulder_ratio",
+                 "rotation_fraction", "wrist_gap", "both_hands_fraction",
+                 "peripheral_fraction", "eye_level_fraction",
+                 "torso_contact_fraction", "cross_body_fraction",
                  "confidence", "duration")
 
     def as_dict(self) -> dict:
@@ -261,6 +265,58 @@ def extract(window) -> MotionFeatures:
 
     # How far the hands roam: small for focused work, large for exercise.
     f.wrist_spread = float(np.linalg.norm(wrists_smooth.std(axis=0), axis=1).mean())
+
+    # ------------------------------------------------- head and torso -------
+    # Head pitch without using the face: how far the nose sits above the
+    # shoulder line. Looking down at a manual or a tablet brings it closer.
+    shoulder_mid = shoulders.mean(axis=1)
+    nose_rise = shoulder_mid[:, 1] - points[:, NOSE, 1]
+    f.head_pitch = float(nose_rise.mean())
+    f.head_down_fraction = float(np.mean(nose_rise < config.HEAD_DOWN_RISE))
+
+    # Shoulder width against torso length. Facing the camera the shoulders are
+    # at their widest; turning to reach for stowage foreshortens them.
+    shoulder_width = np.linalg.norm(points[:, L_SHOULDER, :]
+                                    - points[:, R_SHOULDER, :], axis=1)
+    f.shoulder_ratio = float(shoulder_width.mean())
+    f.rotation_fraction = float(np.mean(shoulder_width < config.ROTATED_SHOULDER_RATIO))
+
+    # --------------------------------------------------- hands, in zones -----
+    gap = np.linalg.norm(wrists[:, 0, :] - wrists[:, 1, :], axis=1)
+    f.wrist_gap = float(gap.mean())
+
+    # Both hands working together in front of the chest: fine two-handed work.
+    in_front = (np.abs(wrists[:, :, 0]) < 0.70)
+    at_chest = ((wrists[:, :, 1] > config.CHEST_ZONE_TOP)
+                & (wrists[:, :, 1] < config.CHEST_ZONE_BOTTOM))
+    f.both_hands_fraction = float(np.mean(np.all(in_front & at_chest, axis=1)))
+
+    # A hand thrown out to the side: reaching for stowage rather than working
+    # in front of the body.
+    f.peripheral_fraction = float(np.mean(np.any(
+        np.abs(wrists[:, :, 0]) > config.PERIPHERAL_REACH, axis=1)))
+
+    # Held up at eye level but not overhead: a camera, or something inspected.
+    eye_level = ((wrists[:, :, 1] < config.EYE_LEVEL_TOP)
+                 & (wrists[:, :, 1] > config.EYE_LEVEL_BOTTOM))
+    f.eye_level_fraction = float(np.mean(np.any(eye_level, axis=1)))
+
+    # A hand resting on one's own torso: a health check, not a task.
+    # A hand resting on the crew member's own torso - checking a pulse, or
+    # holding a dressing. This has to be a tight test: hands doing ordinary
+    # work in front of the chest sit only a little further out, and a loose
+    # radius made every seated console task read as a medical check.
+    torso_mid = (shoulder_mid + points[:, [L_HIP, R_HIP], :].mean(axis=1)) / 2.0
+    to_torso = np.linalg.norm(wrists - torso_mid[:, None, :], axis=2)
+    on_centre = np.abs(wrists[:, :, 0]) < config.TORSO_CONTACT_HALF_WIDTH
+    touching = (to_torso < config.TORSO_CONTACT_RADIUS) & on_centre
+    f.torso_contact_fraction = float(np.mean(np.any(touching, axis=1)))
+
+    # A hand that has crossed to the other side of the body: pulling on a
+    # suit, or reaching across for a harness.
+    crossed = ((wrists[:, 0, 0] > config.CROSS_BODY_MARGIN)
+               | (wrists[:, 1, 0] < -config.CROSS_BODY_MARGIN))
+    f.cross_body_fraction = float(np.mean(crossed))
 
     f.confidence = float(np.mean([fr.confidence for fr in frames]))
     return f

@@ -15,10 +15,11 @@ from . import config
 from .camera import CameraSource
 from .demo import DemoSource
 from .logbook import ActivityLogger
-from .tracking import CrewTracker
+from .objects import ObjectDetector, roles_present
+from .subject import SubjectLock
 from .normalize import PoseWindow, normalise
-from .pose import (PoseTracker, draw_crew_summary, draw_crew_tag,
-                   draw_skeleton)
+from .pose import (PoseTracker, draw_objects, draw_skeleton,
+                   draw_subject_tag)
 
 
 class ProcessingPipeline:
@@ -37,13 +38,14 @@ class ProcessingPipeline:
         self._running = False
         self._thread = None
 
-        self.crew = CrewTracker()
+        # Exactly one person is followed. See app/subject.py for why.
+        self.subject = SubjectLock()
+        self.objects = ObjectDetector()
+        self.detections = []
         self.logger = ActivityLogger()
-        self._known_crew = set()
         self.pose_detected = False
         self.landmarks = None
         self.normalised = None
-        self.crew_count = 0
         self.process_fps = 0.0
         self.latency_ms = 0.0
 
@@ -79,8 +81,7 @@ class ProcessingPipeline:
             # Close the open log segment so a mode change cannot invent one
             # long activity spanning both sources.
             self.logger.flush()
-            self.crew.reset()
-            self._known_crew = set()
+            self.subject.reset()
             if mode == "demo":
                 self.demo.rewind()
             self.mode = mode
@@ -112,22 +113,50 @@ class ProcessingPipeline:
         if not self.tracker.available:
             return self.tracker.error
         if self.pose_detected:
-            return "Crew member locked - 33 landmarks"
+            if self.subject.ignored:
+                return (f"Subject locked - ignoring {self.subject.ignored} "
+                        f"other{'s' if self.subject.ignored > 1 else ''} in frame")
+            return "Subject locked - 33 landmarks"
+        if self.subject.locked:
+            return "Subject briefly out of view - holding lock"
         return "No crew member in frame"
 
-    def activity(self) -> dict:
-        """Every tracked crew member, with the alert state across the crew."""
-        crew = self.crew.as_list()
-        anomalies = [c for c in crew if c["is_anomaly"]]
+    def view_state(self) -> dict:
+        """How the video is presented, and what the object model is doing."""
         return {
-            "crew": crew,
-            "crew_count": len(crew),
-            "visible_count": self.crew.visible_count,
-            "max_crew": config.MAX_CREW,
-            "is_anomaly": bool(anomalies),
-            "anomaly_crew": [c["name"] for c in anomalies],
-            "still_seconds": max((c["still_seconds"] for c in anomalies), default=0.0),
+            "video_mode": config.VIDEO_MODE,
+            "show_skeleton": config.SHOW_SKELETON,
+            "show_objects": config.SHOW_OBJECTS,
+            "objects": self.objects.status(),
         }
+
+    def set_view(self, show_skeleton=None, video_mode=None,
+                 show_objects=None) -> dict:
+        """Change how the video is presented. Never touches classification.
+
+        Toggling the overlay must not disturb the pipeline: the same frames
+        are analysed and the same rows are logged either way. Only the drawing
+        changes, which is why these flags are read at draw time and nowhere
+        else.
+        """
+        if show_skeleton is not None:
+            config.SHOW_SKELETON = bool(show_skeleton)
+        if show_objects is not None:
+            config.SHOW_OBJECTS = bool(show_objects)
+        if video_mode in ("normal", "privacy"):
+            config.VIDEO_MODE = video_mode
+        return self.view_state()
+
+    def activity(self) -> dict:
+        """The monitored subject's activity, and the alert state."""
+        state = self.subject.state()
+        state["objects"] = [d.as_dict() for d in self.detections]
+        state["held"] = sorted({d.name for d in self.detections if d.in_hand})
+        state.update({
+            "subject_name": config.SUBJECT_NAME,
+            "still_seconds": state["still_seconds"] if state["is_anomaly"] else 0.0,
+        })
+        return state
 
     def log_view(self, limit: int = 25) -> dict:
         """Recent activity segments plus cumulative time per activity."""
@@ -142,10 +171,7 @@ class ProcessingPipeline:
 
     def telemetry(self) -> dict:
         """Numbers proving normalisation holds steady while raw values move."""
-        # Telemetry follows the first tracked crew member, which is the one
-        # the normalisation panel is demonstrating.
-        lead = next(iter(self.crew.tracks), None)
-        window = lead.window if lead else None
+        window = self.subject.window
         pose = window.latest if window else None
         data = {
             "buffer_count": window.count if window else 0,
@@ -153,7 +179,7 @@ class ProcessingPipeline:
             "buffer_span": round(window.span_seconds, 2) if window else 0.0,
             "buffer_ready": window.is_full if window else False,
             "has_pose": pose is not None,
-            "crew_name": lead.name if lead else None,
+            "subject_name": config.SUBJECT_NAME,
         }
         if pose is None:
             return data
@@ -194,40 +220,68 @@ class ProcessingPipeline:
                 if self.camera.status == "live":
                     poses = self.tracker.detect(frame)
 
-            # `poses` is one entry per crew member visible this frame.
+            # The detector may see several people. Exactly one of them is
+            # followed; the rest are discarded here and never reach the
+            # window, the classifier or the log.
             height, width = frame.shape[:2]
-            normalised, raw_by_index = [], {}
+            candidates, raw_for = [], {}
             for pose_landmarks in poses:
                 pose = normalise(pose_landmarks, width, height)
                 if pose is None:
                     continue
-                raw_by_index[id(pose)] = pose_landmarks
-                normalised.append(pose)
+                raw_for[id(pose)] = pose_landmarks
+                candidates.append(pose)
 
-            matched = self.crew.update(normalised)
-            self.crew_count = len(matched)
-            self.pose_detected = bool(matched)
-            self.landmarks = raw_by_index.get(id(normalised[0])) if normalised else None
-            self.normalised = normalised[0] if normalised else None
+            # Objects are detected on a background thread every few frames;
+            # whatever the newest result is gets used. Pose tracking never
+            # waits for the slower object model.
+            self.objects.submit(frame)
+            detections = self.objects.latest()
 
-            for track, pose in matched:
-                self.logger.observe(track.name, track.label, track.confidence)
+            lead_landmarks = None
+            torso_px = height * 0.25
+            if candidates:
+                best = max(candidates, key=lambda c: c.torso_length)
+                lead_landmarks = raw_for.get(id(best))
+                torso_px = best.torso_length * height
+            if detections and lead_landmarks is not None:
+                detections = self.objects.attach_to_hands(
+                    detections, lead_landmarks, width, height, torso_px)
+            self.detections = detections
 
-            # Close the log segment of anyone whose track has been retired.
-            active = {t.name for t in self.crew.tracks}
-            for name in self._known_crew - active:
-                self.logger.retire(name)
-            self._known_crew = active
+            roles = roles_present(detections)
+            held = roles_present(detections, held_only=True)
 
-            for track, pose in matched:
-                pose_landmarks = raw_by_index.get(id(pose))
-                if pose_landmarks is None:
-                    continue
-                colour = config.ACTIVITY_COLORS.get(track.label, config.COLOR_ACCENT)
-                frame = draw_skeleton(frame, pose_landmarks, colour)
-                draw_crew_tag(frame, pose_landmarks, track.name, track.label, colour)
+            chosen = self.subject.update(candidates, roles=roles,
+                                         held_roles=held)
 
-            draw_crew_summary(frame, self.crew.tracks)
+            self.pose_detected = chosen is not None
+            self.normalised = chosen
+            self.landmarks = raw_for.get(id(chosen)) if chosen is not None else None
+
+            self.logger.observe(config.SUBJECT_NAME, self.subject.label,
+                                self.subject.confidence)
+
+            # Privacy Mode replaces the video with a plain field, so the
+            # skeleton and the analysis stay visible while the crew member
+            # does not. Crew privacy is a genuine documented concern in
+            # spaceflight, and the monitoring works just as well without
+            # anyone being recognisable.
+            if config.VIDEO_MODE == "privacy":
+                frame = np.full_like(frame, (18, 13, 11))
+            elif config.SHOW_OBJECTS:
+                draw_objects(frame, self.detections)
+
+            if chosen is not None and self.landmarks is not None:
+                colour = config.ACTIVITY_COLORS.get(self.subject.label,
+                                                    config.COLOR_ACCENT)
+                # In Privacy Mode the skeleton is all there is, so it is drawn
+                # whatever the overlay toggle says.
+                if config.SHOW_SKELETON or config.VIDEO_MODE == "privacy":
+                    frame = draw_skeleton(frame, self.landmarks, colour)
+                draw_subject_tag(frame, self.landmarks, self.subject.label,
+                                 self.subject.confidence, colour,
+                                 self.subject.ignored)
 
             with self._lock:
                 self._output = frame

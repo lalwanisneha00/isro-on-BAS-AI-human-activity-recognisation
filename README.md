@@ -40,6 +40,8 @@ Other options:
 | `python run.py --camera 1` | Use a second webcam instead of the built-in one |
 | `python run.py --no-browser` | Don't open a browser automatically |
 | `python tests/run_all.py` | Run the test suite |
+| `python tools/evaluate.py` | Measure accuracy against the labelled clips |
+| `python tools/record_clip.py` | Record labelled clips for evaluation |
 
 Press **Ctrl+C** to stop. Stopping this way writes the activity that was in
 progress to the log; force-closing the window loses only that last entry.
@@ -57,7 +59,8 @@ You need **Python 3.10 or newer**. Then, from this folder:
 pip install -r requirements.txt
 ```
 
-That installs OpenCV, MediaPipe, FastAPI and Uvicorn.
+That installs OpenCV, MediaPipe, FastAPI, Uvicorn and Ultralytics (which
+brings PyTorch with it, so expect a large download the first time).
 
 Two files are needed that are not Python packages:
 
@@ -93,22 +96,101 @@ moves as you move; the right column must stay pinned. See below.
 
 ---
 
-## The seven activities
+## What it recognises
+
+Twenty-one activities, in three tiers. Tier 1 is the core list and is the one
+that has to be reliable; the later tiers are built on the same machinery but
+lean harder on seeing the right object.
+
+**Tier 1 - core**
 
 | Activity | What triggers it |
 |---|---|
 | **Exercise** | Hands sweeping a wide arc, briskly and repeatedly |
-| **Experiment Operation** | Hands working in a small area in front of the body |
-| **Eating/Rest** | A hand returning to the face while the body stays put |
-| **Maintenance** | Arms raised or reaching out, working in bursts |
-| **Idle** | Present and calm |
+| **Drinking** | Hand to the mouth **with a drink container in it** |
+| **Eating** | Hand travelling to the mouth and back, or a utensil in hand |
+| **Laptop Work** | A laptop in view, hands working in front of it, body still |
+| **Reading Procedure** | Head angled down over still hands holding something |
+| **Experiment Operation** | Hands working a fixed forward zone, finely, no object naming it better |
+| **Maintenance/Repair** | A tool in hand, or arms raised and reaching, in bursts |
+| **Seated at Workstation** | Settled at a station with nothing more specific happening |
+| **Idle/Floating** | Present and calm |
 | **In-Transit/Movement** | The whole body crossing the module |
 | **Anomaly (No Motion)** | No movement at all for more than 8 seconds |
+| **Uncertain** | Nothing matched well enough to name honestly |
+
+**Tier 2** - Holding Object, Tablet/Device Use, Sample Handling,
+Stowage/Retrieval, Communication, Photography/Observation, Writing/Logging.
+
+**Tier 3 (stretch)** - Health Check/Medical, Hygiene, Equipment
+Donning/Doffing. These work in principle and are scored the same way, but they
+have had the least testing.
 
 An anomaly turns the console amber and raises a banner across the top. Amber is
 used for nothing else, so it can only ever mean one thing.
 
----
+### Sitting, in a system built for microgravity
+
+A fair question from a judge: *there is no sitting in space, so why detect it?*
+
+Crew do not sit, but they **restrain themselves at a workstation** - feet in
+loops, thighs against a brace - and the geometry is close to a seated one:
+torso upright and stable, hips fixed, legs folded and still. Recognising that
+posture is recognising "settled at a station to work", which is exactly the
+distinction an activity log needs. It is also the only way the system can be
+tested on Earth, where every development hour happens with someone in a chair.
+
+Sitting is treated as a **posture, not a rival activity**: somebody can be
+seated *and* operating an experiment, and the console reports both.
+
+It works facing away from the camera (no face landmarks are used anywhere) and
+with the legs hidden behind a desk, where it falls back to torso cues and says
+so, with lower confidence.
+
+## Objects, and an honest limitation
+
+Pose alone cannot separate some activities that matter. A hand raised to the
+mouth is the same skeleton whether the crew member is drinking or eating. What
+settles it is what they are holding, so a **YOLOv8n** model runs alongside the
+pose tracker.
+
+**The caveat, stated plainly.** That model is trained on COCO, which knows 80
+everyday object classes and none of the things actually aboard a station - no
+sample vials, no torque tools, no cargo transfer bags. Training a detector that
+does know them needs a labelled dataset of flight hardware, which v1 does not
+have. So v1 does two things deliberately:
+
+- **Only whitelisted classes are used.** Everything else the model reports -
+  chairs, plants, people, whatever is behind the crew member - is discarded
+  before it reaches the console or the log.
+- **Whitelisted classes are shown under the name of the item they stand in
+  for.** A COCO "bottle" is displayed as a *Water Pouch*, because in this
+  system that is the role it plays.
+
+| COCO class | Shown as | Supports |
+|---|---|---|
+| bottle | Water Pouch | Drinking, Holding |
+| cup | Drink Container | Drinking |
+| bowl | Food Container | Eating |
+| spoon / fork | Utensil | Eating |
+| knife | Utensil / Tool | Eating, Maintenance |
+| laptop | Crew Laptop | Laptop Work |
+| keyboard / mouse | Workstation Input | Laptop Work |
+| cell phone | Handheld Device | Tablet Use, Photography |
+| book | Procedure Manual | Reading Procedure |
+| scissors | Hand Tool | Maintenance |
+| toothbrush | Hygiene Item | Hygiene, Sample Handling |
+| remote | Handheld Controller | Experiment Operation |
+| backpack | Stowage Bag | Stowage/Retrieval |
+| clock | Timer | Experiment Operation |
+
+**Custom training on real flight hardware is the obvious next version.** Being
+upfront about this is better than a judge discovering it.
+
+Objects **assist** classification and never decide it alone: every activity
+still scores from pose, so the system works with nothing detected - which is
+most of the time. Detection runs on a background thread every 4th frame, so
+the video never waits for it.
 
 ## How it works
 
@@ -157,6 +239,32 @@ Two details worth knowing, because both were bugs before they were features:
 
 ---
 
+## The console controls
+
+Three buttons on the camera panel, sized to be hit during a live demo:
+
+- **Skeleton** - overlay on or off.
+- **Objects** - detection boxes on or off.
+- **Privacy** - hides the video and keeps the skeleton and the analysis. Crew
+  privacy is a genuine documented concern in spaceflight, and the monitoring
+  works just as well without anyone being recognisable.
+
+None of them touch classification. The same frames are analysed and the same
+rows logged whatever is toggled; only the drawing changes.
+
+## Downloading the log
+
+Three buttons on the Activity Log panel, with a scope selector for
+**this session** or **all history**:
+
+- **CSV** - opens straight into Excel, one row per activity segment.
+- **JSON** - the same data for anything reading it programmatically.
+- **Report** - a plain-text mission-day summary: time per activity, how many
+  times the crew member changed task, and every anomaly flagged.
+
+Filenames carry a timestamp, so repeated downloads never overwrite each other.
+Everything is generated locally; nothing leaves the machine.
+
 ## Tuning it
 
 Every threshold lives in [`app/config.py`](app/config.py), grouped and
@@ -169,24 +277,37 @@ commented. The ones most worth adjusting:
 | `FOCUSED_MAX_RANGE` | How far they may travel and still be fine work |
 | `WINDOW_SECONDS` | Length of the analysis window |
 | `MIN_LOG_SECONDS` | Shortest segment worth writing to the log |
-| `MAX_CREW` | Crew members tracked at once (see below) |
+| `SUBJECT_SWITCH_RATIO` | How much closer someone must be to take the lock |
+| `SEATED_THRESHOLD` | How readily a posture reads as seated |
+| `YOLO_EVERY_N_FRAMES` | How often object detection runs |
+| `UNCERTAIN_BELOW` | Confidence below which it says Uncertain |
 
 After changing anything, run `python tests/run_all.py` — the suite covers the
 cases these values control, including the ones that are easy to break.
 
 ---
 
-## Multi-crew
+## One crew member, deliberately
 
-The tracker assigns stable identities to several people at once, keeps them
-through brief occlusions, and gives each their own window, classifier and log
-entries. It is tested at six crew members.
+v1 monitors **exactly one person**, and says so on screen with a
+`SUBJECT LOCKED` indicator.
 
-**It ships switched off** (`MAX_CREW = 1`). Asking MediaPipe for several poses
-costs frame rate and admits weak, spurious detections, and both hurt accuracy
-for the single-person case. Raising `MAX_CREW` turns it back on; regenerate the
-demo clip afterwards with `python tools/make_demo_clip.py` so the clip contains
-that many people.
+The detector is allowed to *see* several people so the system can choose
+between them, then it picks one and discards the rest before anything
+downstream - window, classifier, log - ever sees them. The subject is whoever
+is **closest to the camera**, and the lock is sticky:
+
+- Somebody walking past takes the lock only by appearing 1.45x closer for 1.5
+  continuous seconds.
+- The lock survives 2 seconds of the subject being hidden, so a hand across
+  the lens does not wipe their history.
+- If the lock does legitimately move, the window is cleared, so a new person
+  is never classified using the previous one's movement.
+
+Multi-crew tracking is still in the repository (`app/tracking.py`, tested at
+six people) behind `ENABLE_MULTI_CREW = False`. It was switched off because it
+cost real accuracy: a window that silently swaps between people classifies a
+blend of both.
 
 ---
 

@@ -6,10 +6,12 @@ from pathlib import Path
 
 import cv2
 from fastapi import Body, FastAPI
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import (FileResponse, Response,
+                               StreamingResponse)
 from fastapi.staticfiles import StaticFiles
 
 from . import config
+from . import export
 from .camera import CameraSource
 from .pipeline import ProcessingPipeline
 
@@ -68,6 +70,34 @@ def set_mode(payload: dict = Body(default={})):
     return pipeline.set_mode(payload.get("mode", "live"))
 
 
+@app.post("/api/view")
+def set_view(payload: dict = Body(default={})):
+    """Skeleton overlay, object boxes, and Privacy Mode.
+
+    Presentation only: the same frames are analysed and the same rows are
+    logged whatever this is set to.
+    """
+    return pipeline.set_view(
+        show_skeleton=payload.get("show_skeleton"),
+        video_mode=payload.get("video_mode"),
+        show_objects=payload.get("show_objects"),
+    )
+
+
+@app.get("/api/download")
+def download(kind: str = "csv", scope: str = "session"):
+    """Download the activity log as CSV, JSON, or a mission-day report.
+
+    Built here and streamed straight back, so it works with no network.
+    """
+    name, media_type, body = export.build(pipeline.logger, kind, scope)
+    return Response(
+        content=body,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{name}"'},
+    )
+
+
 @app.get("/api/log")
 def log(limit: int = 25):
     """Logged activity segments and cumulative time per activity."""
@@ -92,7 +122,10 @@ def status():
         "camera_status": camera.status,
         "detail": camera.detail,
         "fps": camera.fps,
-        "crew_tracked": len(pipeline.crew.tracks),
+        "subject_locked": pipeline.subject.locked,
+        "subject_visible": pipeline.subject.visible,
+        "candidates": pipeline.subject.candidates,
+        "ignored": pipeline.subject.ignored,
         "pose_status": pipeline.pose_status,
         "pose_detail": pipeline.pose_detail,
         "process_fps": pipeline.process_fps,
@@ -100,4 +133,5 @@ def status():
         "mission": config.MISSION_NAME,
         "module": config.MODULE_NAME,
         **pipeline.mode_state(),
+        **pipeline.view_state(),
     }

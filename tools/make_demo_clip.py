@@ -28,8 +28,10 @@ OUT_DIR = Path(__file__).resolve().parent.parent / "demo"
 # different point, so at any moment the module shows several different
 # activities at once - which is the whole point of tracking a crew.
 SEQUENCE = [
-    ("Idle", 11.0),
-    ("Experiment Operation", 13.0),
+    ("Idle", 10.0),
+    ("Seated at Workstation", 11.0),
+    ("Experiment Operation", 12.0),
+    ("Reading Procedure", 11.0),
     ("Exercise", 12.0),
     ("In-Transit/Movement", 9.0),
     ("Eating/Rest", 12.0),
@@ -79,7 +81,13 @@ def _elbow(shoulder, wrist, side):
     return (mx - dy / length * bend, my + dx / length * bend)
 
 
-def build_landmarks(wrist_l, wrist_r, lean=0.0):
+SEATED_ACTIVITIES = {"Seated at Workstation", "Reading Procedure",
+                     "Experiment Operation"}
+HEAD_DOWN_ACTIVITIES = {"Reading Procedure"}
+
+
+def build_landmarks(wrist_l, wrist_r, lean=0.0, seated=False,
+                    head_down=False):
     """Return all 33 landmarks in torso units for one frame."""
     p = np.zeros((33, 2), dtype=np.float32)
 
@@ -88,11 +96,17 @@ def build_landmarks(wrist_l, wrist_r, lean=0.0):
     p[15], p[16] = wrist_l, wrist_r
     p[13] = _elbow(BASE_SHOULDER_L, wrist_l, -1.0)
     p[14] = _elbow(BASE_SHOULDER_R, wrist_r, 1.0)
-    p[25], p[26] = BASE_KNEE_L, BASE_KNEE_R
-    p[27], p[28] = BASE_ANKLE_L, BASE_ANKLE_R
+    if seated:
+        # Thighs forward: head-on, the knees ride up near hip height and the
+        # shins drop away below them.
+        p[25], p[26] = (-0.17, 0.06), (0.17, 0.06)
+        p[27], p[28] = (-0.17, 0.66), (0.17, 0.66)
+    else:
+        p[25], p[26] = BASE_KNEE_L, BASE_KNEE_R
+        p[27], p[28] = BASE_ANKLE_L, BASE_ANKLE_R
 
-    # Head cluster, riding just above the shoulder line.
-    neck_y = -1.06
+    # Head cluster, riding just above the shoulder line. Reading drops it.
+    neck_y = -1.06 + (0.30 if head_down else 0.0)
     p[0] = (0.0, neck_y - 0.40)                       # nose
     p[1] = (-0.05, neck_y - 0.47); p[2] = (-0.07, neck_y - 0.47)
     p[3] = (-0.09, neck_y - 0.47); p[4] = (0.05, neck_y - 0.47)
@@ -109,8 +123,9 @@ def build_landmarks(wrist_l, wrist_r, lean=0.0):
         p[thumb] = (wx + 0.04 * side, wy + 0.02)
 
     # Feet.
-    p[29], p[31] = (-0.19, 1.26), (-0.27, 1.26)
-    p[30], p[32] = (0.19, 1.26), (0.27, 1.26)
+    foot_y = 0.74 if seated else 1.26
+    p[29], p[31] = (-0.19, foot_y), (-0.27, foot_y)
+    p[30], p[32] = (0.19, foot_y), (0.27, foot_y)
 
     if lean:
         a = math.radians(lean)
@@ -155,6 +170,20 @@ def arms_for(activity, t, rng):
     if activity == "Eating/Rest":
         phase = 0.5 + 0.5 * math.sin(2 * math.pi * 0.32 * t)
         return (-0.42 + 0.36 * phase, -0.14 - 1.24 * phase), (0.45, -0.12)
+
+    if activity == "Seated at Workstation":
+        # Settled at a station: hands resting forward, almost no movement.
+        breathe = 0.018 * math.sin(2 * math.pi * 0.22 * t)
+        jx, jy = jitter(0.004)
+        return ((-0.34 + jx, -0.42 + breathe + jy),
+                (0.34 + jx, -0.42 + breathe + jy))
+
+    if activity == "Reading Procedure":
+        # Something held up at chest height while the head stays angled down
+        # over it; the hands make only small settling adjustments.
+        dx = 0.03 * math.sin(2 * math.pi * 0.5 * t)
+        dy = 0.025 * math.sin(2 * math.pi * 0.4 * t)
+        return ((-0.26 + dx, -0.72 + dy), (0.26 + dx, -0.72 + dy))
 
     if activity == "Maintenance":
         burst = 0.09 * math.sin(2 * math.pi * 0.75 * t) if int(t) % 2 == 0 else 0.0
@@ -295,7 +324,9 @@ def main():
             else:
                 cx, lean = hip_x, 0.0
 
-            body = build_landmarks(wrist_l, wrist_r, lean)
+            body = build_landmarks(wrist_l, wrist_r, lean,
+                                   seated=activity in SEATED_ACTIVITIES,
+                                   head_down=activity in HEAD_DOWN_ACTIVITIES)
             px = np.empty_like(body)
             px[:, 0] = body[:, 0] * torso_px + cx * WIDTH
             px[:, 1] = body[:, 1] * torso_px + hip_y * HEIGHT

@@ -18,12 +18,16 @@ import test_dataset           # noqa: E402
 import test_demo              # noqa: E402
 import test_logbook           # noqa: E402
 import test_normalisation     # noqa: E402
+import test_posture           # noqa: E402
+import test_subject           # noqa: E402
 import test_tracking          # noqa: E402
 
 MODULES = [
     test_normalisation,
     test_activity,
+    test_posture,
     test_logbook,
+    test_subject,
     test_tracking,
     test_dataset,
     test_demo,

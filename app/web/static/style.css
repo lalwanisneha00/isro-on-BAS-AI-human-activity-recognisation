@@ -984,3 +984,205 @@ a:focus-visible {
   .panel { border-color: #bbb; background: #fff; }
   .log-table td, .log-table th { color: #000; }
 }
+
+/* --------------------------------------------------- monitored subject --- */
+/* v1 follows one person on purpose. The lock indicator says so plainly, so a
+   single name reads as a decision rather than as a limitation. */
+.lock-pill {
+  display: flex;
+  flex: none;
+  white-space: nowrap;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 10px;
+  border: 1px solid var(--panel-edge);
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+  color: var(--text-dim);
+  transition: color 0.35s ease, border-color 0.35s ease;
+}
+
+.lock-pill .lock-icon { font-size: 8px; }
+
+.lock-pill.locked {
+  color: var(--accent);
+  border-color: rgba(0, 217, 255, 0.42);
+  background: var(--accent-dim);
+}
+
+.lock-pill.locked .lock-icon { animation: pulse 2.2s infinite; }
+
+.lock-pill.holding { color: var(--alert); border-color: rgba(255, 176, 32, 0.4); }
+
+/* The panel heading gives way before the lock indicator does: the indicator
+   is the thing a judge is being asked to read. */
+.activity-panel .panel-head h2 { min-width: 0; }
+
+.subject { padding: 16px; }
+
+.subject-empty {
+  margin: 0;
+  padding: 14px 0;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.subject-activity {
+  margin: 0 0 12px;
+  font-size: 21px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--accent);
+  transition: color 0.45s ease;
+}
+
+.subject-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 10px;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.subject-note {
+  margin: 10px 0 0;
+  padding-top: 9px;
+  border-top: 1px solid var(--panel-edge);
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+
+.activity-panel.alert .subject-activity { color: var(--status-anomaly); }
+.activity-panel.alert .lock-pill.locked {
+  color: var(--status-anomaly);
+  border-color: rgba(250, 178, 25, 0.45);
+  background: rgba(250, 178, 25, 0.12);
+}
+
+/* ------------------------------------------------- overlay + downloads --- */
+/* These have to be hittable mid-demo, so they live on the panel headers
+   rather than behind a settings menu. */
+.view-controls, .log-tools {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+  margin-right: 14px;
+}
+
+.view-btn {
+  padding: 5px 11px;
+  border: 1px solid var(--panel-edge);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-dim);
+  font-family: var(--sans);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.25s ease, color 0.25s ease, border-color 0.25s ease;
+}
+
+.view-btn:hover { color: var(--text); border-color: #2C3A54; }
+
+.view-btn.is-on {
+  background: var(--accent-dim);
+  color: var(--accent);
+  border-color: rgba(0, 217, 255, 0.4);
+}
+
+.view-btn.is-busy { opacity: 0.55; cursor: progress; }
+
+.log-scope {
+  padding: 5px 8px;
+  border: 1px solid var(--panel-edge);
+  border-radius: 5px;
+  background: #0E1421;
+  color: var(--text-dim);
+  font-family: var(--sans);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+
+/* --------------------------------------------------------- objects panel -- */
+.objects { padding: 12px 16px 4px; }
+
+.objects-empty {
+  margin: 0;
+  padding: 10px 0;
+  text-align: center;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--text-dim);
+}
+
+.object-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(30, 41, 64, 0.5);
+  font-size: 11px;
+}
+
+.object-row:last-child { border-bottom: 0; }
+
+.object-dot {
+  width: 7px; height: 7px;
+  flex: none;
+  border-radius: 2px;
+  background: #4E5C75;
+}
+
+.object-row.in-hand .object-dot { background: var(--accent); }
+.object-row.in-hand .object-name { color: var(--accent); }
+
+.object-name { flex: 1; color: var(--text); }
+
+.object-held {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  color: var(--accent);
+}
+
+.object-conf {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+/* The stand-in caveat is stated on the console, not just in the README. */
+.objects-note {
+  margin: 0;
+  padding: 9px 16px 13px;
+  border-top: 1px solid var(--panel-edge);
+  font-size: 9.5px;
+  line-height: 1.5;
+  color: #4E5C75;
+}
+
+/* Privacy Mode should look deliberate, not like a broken feed. */
+.video-frame.privacy::after {
+  content: "PRIVACY MODE - VIDEO SUPPRESSED";
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  padding: 5px 12px;
+  border: 1px solid rgba(0, 217, 255, 0.35);
+  border-radius: 999px;
+  background: rgba(11, 14, 23, 0.9);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.18em;
+  color: var(--accent);
+}

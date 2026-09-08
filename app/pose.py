@@ -45,7 +45,7 @@ class PoseTracker:
             options = vision.PoseLandmarkerOptions(
                 base_options=BaseOptions(model_asset_path=str(model_path)),
                 running_mode=vision.RunningMode.VIDEO,
-                num_poses=config.MAX_CREW,
+                num_poses=config.POSE_DETECTION_BUDGET,
                 min_pose_detection_confidence=config.MIN_POSE_DETECTION_CONFIDENCE,
                 min_pose_presence_confidence=config.MIN_POSE_PRESENCE_CONFIDENCE,
                 min_tracking_confidence=config.MIN_TRACKING_CONFIDENCE,
@@ -133,66 +133,77 @@ def draw_skeleton(frame: np.ndarray, landmarks, colour=None) -> np.ndarray:
     return cv2.addWeighted(overlay, 0.85, frame, 0.15, 0)
 
 
-def draw_crew_tag(frame, landmarks, name: str, label: str, colour) -> None:
-    """Label one crew member on the video, beside their own skeleton.
+def draw_subject_tag(frame, landmarks, activity: str, confidence: float,
+                     colour, ignored: int = 0) -> None:
+    """Label the monitored subject on the video, above their head.
 
-    With several people in frame a single readout cannot say who is doing
-    what, so the name and activity ride next to each body.
+    The tag says who is being followed and what they are doing, so it is
+    obvious at a glance that one person was chosen deliberately rather than
+    one person happening to be all the detector found.
     """
-    height, width = frame.shape[:2]
+    if not landmarks:
+        return
 
+    height, width = frame.shape[:2]
     xs = [lm.x * width for lm in landmarks]
     ys = [lm.y * height for lm in landmarks]
     if not xs:
         return
 
-    # Anchor above the head, kept inside the frame.
-    cx = int(min(max(sum(xs) / len(xs), 60), width - 60))
+    centre = int(sum(xs) / len(xs))
     top = int(min(ys))
-    text = f"{name}  {label.upper()}"
-    (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.42, 1)
 
-    x0 = int(min(max(cx - tw // 2 - 9, 6), width - tw - 20))
-    y1 = max(th + 14, top - 10)
-    y0 = y1 - th - 11
+    text = f"SUBJECT LOCKED - {activity.upper()}  {confidence:.0%}"
+    scale, thickness = 0.46, 1
+    (text_w, text_h), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX,
+                                          scale, thickness)
 
-    panel = frame[y0:y1, x0:x0 + tw + 18]
-    if panel.size:
-        dark = panel.copy()
-        dark[:] = (18, 12, 9)
-        cv2.addWeighted(dark, 0.8, panel, 0.2, 0, panel)
+    pad = 8
+    x1 = max(4, min(centre - text_w // 2 - pad, width - text_w - 2 * pad - 4))
+    y2 = max(text_h + 2 * pad + 4, top - 12)
+    y1 = y2 - text_h - 2 * pad
+    x2 = x1 + text_w + 2 * pad
 
-    cv2.rectangle(frame, (x0, y0), (x0 + tw + 18, y1), colour, 1, cv2.LINE_AA)
-    cv2.rectangle(frame, (x0, y0), (x0 + 3, y1), colour, -1)
-    cv2.putText(frame, text, (x0 + 9, y1 - 7),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.42, colour, 1, cv2.LINE_AA)
+    panel = frame.copy()
+    cv2.rectangle(panel, (x1, y1), (x2, y2), (14, 10, 8), -1)
+    cv2.addWeighted(panel, 0.78, frame, 0.22, 0, frame)
+    cv2.rectangle(frame, (x1, y1), (x2, y2), colour, 1, cv2.LINE_AA)
+    cv2.putText(frame, text, (x1 + pad, y2 - pad), cv2.FONT_HERSHEY_SIMPLEX,
+                scale, (255, 255, 255), thickness, cv2.LINE_AA)
+
+    # Say plainly when other people are present but deliberately not followed.
+    if ignored:
+        note = f"{ignored} other{'s' if ignored > 1 else ''} in frame - not tracked"
+        cv2.putText(frame, note, (16, height - 18), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.44, config.COLOR_ACCENT, 1, cv2.LINE_AA)
 
 
-def draw_crew_summary(frame, tracks) -> None:
-    """Draw the crew count, and an alert strip if anyone has stopped moving."""
-    height, width = frame.shape[:2]
+def draw_objects(frame, detections) -> None:
+    """Outline the whitelisted objects, named for what they stand in for.
 
-    count = len(tracks)
-    text = "NO CREW IN FRAME" if count == 0 else (
-        f"{count} CREW MEMBER{'S' if count != 1 else ''} TRACKED")
-    cv2.putText(frame, text, (18, height - 18),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.46,
-                config.COLOR_ACCENT if count else (140, 128, 110), 1, cv2.LINE_AA)
-
-    alerts = [t for t in tracks if t.is_anomaly]
-    if not alerts:
+    Only objects on the task whitelist ever reach here, so nothing outside
+    the mission's vocabulary is ever drawn on the console.
+    """
+    if not detections:
         return
 
-    names = ", ".join(t.name for t in alerts)
-    warning = f"ANOMALY - NO MOTION: {names}"
-    (tw, th), _ = cv2.getTextSize(warning, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)
-    x0, y0 = 16, 16
-    strip = frame[y0:y0 + th + 18, x0:x0 + tw + 26]
-    if strip.size:
-        dark = strip.copy()
-        dark[:] = (18, 12, 9)
-        cv2.addWeighted(dark, 0.82, strip, 0.18, 0, strip)
-    cv2.rectangle(frame, (x0, y0), (x0 + tw + 26, y0 + th + 18),
-                  config.COLOR_ALERT, 2, cv2.LINE_AA)
-    cv2.putText(frame, warning, (x0 + 13, y0 + th + 5),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, config.COLOR_ALERT, 2, cv2.LINE_AA)
+    for detection in detections:
+        x1, y1, x2, y2 = (int(v) for v in detection.box)
+        # An object in a hand is what actually changes the classification, so
+        # it is the one drawn brightly; everything else stays quiet.
+        colour = config.COLOR_ACCENT if detection.in_hand else (120, 110, 96)
+        thickness = 2 if detection.in_hand else 1
+
+        cv2.rectangle(frame, (x1, y1), (x2, y2), colour, thickness, cv2.LINE_AA)
+
+        label = detection.name.upper()
+        if detection.in_hand:
+            label += "  IN HAND"
+        scale = 0.42
+        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, scale, 1)
+
+        ty = max(th + 8, y1 - 4)
+        cv2.rectangle(frame, (x1, ty - th - 7), (x1 + tw + 10, ty + 3),
+                      (14, 10, 8), -1)
+        cv2.putText(frame, label, (x1 + 5, ty - 2), cv2.FONT_HERSHEY_SIMPLEX,
+                    scale, colour, 1, cv2.LINE_AA)

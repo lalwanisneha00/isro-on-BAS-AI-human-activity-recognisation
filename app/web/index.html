@@ -25,8 +25,8 @@
         <span class="meta-value" id="feed-state">Connecting</span>
       </div>
       <div class="meta-block">
-        <span class="meta-label">Crew Tracked</span>
-        <span class="meta-value" id="pose-state">0</span>
+        <span class="meta-label">Subject</span>
+        <span class="meta-value" id="pose-state">Searching</span>
       </div>
       <div class="meta-block">
         <span class="meta-label">Rate</span>
@@ -60,6 +60,15 @@
       <section class="video-panel">
       <div class="panel-head">
         <h2>Crew Cabin Camera 01</h2>
+        <div class="view-controls">
+          <button type="button" class="view-btn is-on" id="btn-skeleton"
+                  title="Show or hide the skeleton overlay">Skeleton</button>
+          <button type="button" class="view-btn is-on" id="btn-objects"
+                  title="Show or hide detected object boxes">Objects</button>
+          <button type="button" class="view-btn" id="btn-privacy"
+                  title="Hide the video, keep the skeleton and the analysis">
+            Privacy</button>
+        </div>
         <span class="mono" id="panel-detail">Initialising capture device</span>
       </div>
       <div class="video-frame">
@@ -88,6 +97,16 @@
       <div class="panel">
         <div class="panel-head">
           <h2>Activity Log</h2>
+          <div class="log-tools">
+            <select class="log-scope" id="download-scope"
+                    title="How much of the log to download">
+              <option value="session">This session</option>
+              <option value="all">All history</option>
+            </select>
+            <button type="button" class="view-btn" id="btn-csv">CSV</button>
+            <button type="button" class="view-btn" id="btn-json">JSON</button>
+            <button type="button" class="view-btn" id="btn-report">Report</button>
+          </div>
           <span class="mono" id="log-status">0 entries</span>
         </div>
         <div class="table-wrap">
@@ -110,16 +129,44 @@
     <aside class="side-panel">
       <div class="panel activity-panel" id="activity-panel">
         <div class="panel-head">
-          <h2>Crew Roster</h2>
-          <span class="mono" id="crew-count">0 / 6</span>
+          <h2>Monitored Subject</h2>
+          <span class="lock-pill" id="lock-pill">
+            <span class="lock-icon" aria-hidden="true">&#9679;</span>
+            <span id="lock-label">NO SUBJECT</span>
+          </span>
         </div>
-        <div class="roster" id="roster">
-          <p class="roster-empty" id="roster-empty">No crew detected in the module</p>
+        <div class="subject" id="subject">
+          <p class="subject-empty" id="subject-empty">No crew member in frame</p>
+          <div class="subject-body" id="subject-body" hidden>
+            <p class="subject-activity" id="subject-activity">Acquiring</p>
+            <div class="conf-row">
+              <span class="conf-tag">Confidence</span>
+              <b class="mono" id="subject-conf">--</b>
+            </div>
+            <div class="conf-bar"><div class="conf-fill" id="subject-conf-fill"></div></div>
+            <div class="subject-meta">
+              <span class="mono" id="subject-name">CM-1</span>
+              <span class="mono" id="subject-held">locked 0s</span>
+            </div>
+            <p class="subject-note" id="subject-note" hidden></p>
+          </div>
         </div>
         <div class="score-head">
           <span id="score-title">Activity scores</span>
         </div>
         <div class="score-list" id="score-list"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Objects In Scope</h2>
+          <span class="mono" id="object-status">off</span>
+        </div>
+        <div class="objects" id="objects">
+          <p class="objects-empty" id="objects-empty">No task objects in view</p>
+        </div>
+        <p class="objects-note">Detection is restricted to the mission task
+          list. Anything else in the room is ignored.</p>
       </div>
 
       <div class="panel">

@@ -39,14 +39,15 @@ async function pollStatus() {
     pillLabelEl.textContent = state.pillLabel;
     fpsEl.textContent = data.fps ? data.fps.toFixed(1) + " fps" : "--.- fps";
 
-    const tracked = data.crew_tracked || 0;
-    poseStateEl.textContent = String(tracked);
+    const tracked = data.pose_status === "tracking";
+    poseStateEl.textContent = tracked ? "Locked" : "Searching";
     poseStateEl.className = "meta-value tag-" + (tracked ? "ok" : "wait");
-    landmarkCountEl.textContent = tracked ? String(tracked * 33) : "0";
+    landmarkCountEl.textContent = tracked ? "33" : "0";
     latencyEl.textContent = data.latency_ms != null ? data.latency_ms.toFixed(0) : "--";
 
     // While the camera is healthy, the pose detail is the more useful message.
     renderMode(data);
+    applyView(data);
     detailEl.textContent =
       (data.mode === "demo" || data.camera_status === "live")
         ? data.pose_detail : data.detail;
@@ -187,132 +188,134 @@ async function pollTelemetry() {
 }
 
 
-/* ---------------------------------------------------------- crew roster -- */
+/* ------------------------------------------------------ monitored subject -- */
+/* v1 follows exactly one person. The panel shows who is locked, what they are
+   doing, and - when other people are in frame - says plainly that they are
+   being ignored on purpose. */
 
 const actPanelEl = document.getElementById("activity-panel");
-const rosterEl = document.getElementById("roster");
-const rosterEmptyEl = document.getElementById("roster-empty");
-const crewCountEl = document.getElementById("crew-count");
+const lockPillEl = document.getElementById("lock-pill");
+const lockLabelEl = document.getElementById("lock-label");
+const subjectEmptyEl = document.getElementById("subject-empty");
+const subjectBodyEl = document.getElementById("subject-body");
+const subjectActivityEl = document.getElementById("subject-activity");
+const subjectConfEl = document.getElementById("subject-conf");
+const subjectConfFillEl = document.getElementById("subject-conf-fill");
+const subjectNameEl = document.getElementById("subject-name");
+const subjectHeldEl = document.getElementById("subject-held");
+const subjectNoteEl = document.getElementById("subject-note");
 const scoreListEl = document.getElementById("score-list");
 const scoreTitleEl = document.getElementById("score-title");
 
-const ACTIVITIES = [
-  "Exercise", "Experiment Operation", "Eating/Rest", "Maintenance",
-  "Idle", "In-Transit/Movement", "Anomaly (No Motion)",
-];
-
-// Which crew member the score breakdown is showing. Null follows whoever is
-// first in the roster, so the panel is never blank.
-let selectedCrew = null;
+/* The task list lives in config.py and is served to the page, so adding an
+   activity there updates the score panel, the timeline and the chart without
+   any change here. Until the first response arrives these are empty. */
+let ACTIVITIES = [];
+let ACTIVITY_COLOURS = {};
 
 const scoreRows = {};
-for (const name of ACTIVITIES) {
-  const row = document.createElement("div");
-  row.className = "score-row";
-  row.innerHTML = '<span class="score-name"></span><span class="score-value">0.00</span>';
-  row.querySelector(".score-name").textContent = name;
 
-  const track = document.createElement("div");
-  track.className = "score-track";
-  track.innerHTML = '<div class="score-fill"></div>';
+function buildScoreRows() {
+  scoreListEl.innerHTML = "";
+  for (const key of Object.keys(scoreRows)) delete scoreRows[key];
 
-  scoreListEl.appendChild(row);
-  scoreListEl.appendChild(track);
-  scoreRows[name] = {
-    row,
-    value: row.querySelector(".score-value"),
-    fill: track.querySelector(".score-fill"),
-  };
-}
-
-function formatDuration(seconds) {
-  if (seconds < 60) return Math.floor(seconds) + "s";
-  const m = Math.floor(seconds / 60);
-  return m + "m " + Math.floor(seconds % 60) + "s";
-}
-
-function renderScores(member) {
-  scoreTitleEl.textContent = member
-    ? member.name + " \u00B7 activity scores" : "Activity scores";
-
-  const scores = member ? member.scores : {};
-  let leader = null, best = 0;
   for (const name of ACTIVITIES) {
-    const v = scores[name] || 0;
-    if (v > best) { best = v; leader = name; }
-  }
-  for (const name of ACTIVITIES) {
-    const v = scores[name] || 0;
-    const r = scoreRows[name];
-    r.value.textContent = v.toFixed(2);
-    r.fill.style.width = Math.min(100, v * 100).toFixed(0) + "%";
-    r.row.classList.toggle("leading", name === leader && best > 0);
+    const row = document.createElement("div");
+    row.className = "score-row";
+    row.innerHTML =
+      '<span class="score-name"></span><span class="score-value">0.00</span>';
+    row.querySelector(".score-name").textContent = name;
+
+    const track = document.createElement("div");
+    track.className = "score-track";
+    track.innerHTML = '<div class="score-fill"></div>';
+    row.appendChild(track);
+
+    scoreListEl.appendChild(row);
+    scoreRows[name] = {
+      root: row,
+      value: row.querySelector(".score-value"),
+      fill: row.querySelector(".score-fill"),
+    };
   }
 }
 
-function renderRoster(data) {
-  const crew = data.crew || [];
-  crewCountEl.textContent = crew.length + " / " + (data.max_crew || 6);
+function renderScores(scores, activity) {
+  // Only the activities actually in play are worth showing: a list of twenty
+  // rows reading 0.00 tells the reader nothing.
+  const shown = ACTIVITIES.filter(
+    (name) => ((scores && scores[name]) || 0) > 0.005 || name === activity);
+
+  for (const name of ACTIVITIES) {
+    const row = scoreRows[name];
+    const value = (scores && scores[name]) || 0;
+    row.value.textContent = value.toFixed(2);
+    row.fill.style.width = Math.min(100, value * 100).toFixed(0) + "%";
+    row.fill.style.background = ACTIVITY_COLOURS[name] || "#6E7686";
+    row.root.classList.toggle("is-top", name === activity);
+    row.root.hidden = !shown.includes(name);
+  }
+}
+
+function renderSubject(data) {
+  const locked = !!data.locked;
+  const visible = !!data.visible;
+  const activity = data.activity || "Acquiring";
+
+  // Three honest states: following someone, holding a lock through a brief
+  // disappearance, or nobody to follow.
+  lockPillEl.className = "lock-pill"
+    + (locked && visible ? " locked" : locked ? " holding" : "");
+  lockLabelEl.textContent = locked && visible ? "SUBJECT LOCKED"
+    : locked ? "HOLDING LOCK" : "NO SUBJECT";
+
+  subjectEmptyEl.hidden = locked;
+  subjectBodyEl.hidden = !locked;
   actPanelEl.classList.toggle("alert", !!data.is_anomaly);
-  rosterEmptyEl.hidden = crew.length > 0;
 
-  // Rebuild only when the set of crew changes; otherwise update in place so
-  // the rows do not flicker while someone is being tracked.
-  const signature = crew.map((c) => c.name).join(",");
-  if (rosterEl.dataset.signature !== signature) {
-    rosterEl.dataset.signature = signature;
-    for (const el of Array.from(rosterEl.querySelectorAll(".crew-row"))) el.remove();
-    for (const member of crew) {
-      const row = document.createElement("button");
-      row.type = "button";
-      row.className = "crew-row";
-      row.dataset.name = member.name;
-      row.innerHTML =
-        '<span class="crew-tag"></span>' +
-        '<span class="crew-body">' +
-          '<span class="crew-activity"></span>' +
-          '<span class="crew-bar"><span class="crew-fill"></span></span>' +
-        '</span>' +
-        '<span class="crew-meta"><b class="mono"></b><i class="mono"></i></span>';
-      row.querySelector(".crew-tag").textContent = member.name;
-      row.addEventListener("click", () => {
-        selectedCrew = selectedCrew === member.name ? null : member.name;
-      });
-      rosterEl.appendChild(row);
-    }
+  if (!locked) {
+    renderScores(null, null);
+    return;
   }
 
-  const active = selectedCrew && crew.some((c) => c.name === selectedCrew)
-    ? selectedCrew : (crew[0] ? crew[0].name : null);
+  const colour = ACTIVITY_COLOURS[activity] || "#6E7686";
+  subjectActivityEl.textContent = activity;
+  subjectActivityEl.style.color = data.is_anomaly ? "#fab219" : colour;
 
-  for (const member of crew) {
-    const row = rosterEl.querySelector('.crew-row[data-name="' + member.name + '"]');
-    if (!row) continue;
-    const colour = ACTIVITY_COLOURS[member.activity] || "#6E7686";
+  const confidence = data.confidence || 0;
+  subjectConfEl.textContent =
+    confidence > 0 ? (confidence * 100).toFixed(0) + "%" : "--";
+  subjectConfFillEl.style.width = (confidence * 100).toFixed(0) + "%";
+  subjectConfFillEl.style.background = data.is_anomaly ? "#fab219" : colour;
 
-    row.classList.toggle("is-alert", member.is_anomaly);
-    row.classList.toggle("is-selected", member.name === active);
-    row.classList.toggle("is-hidden-crew", !member.visible);
-    row.style.setProperty("--crew-colour", colour);
+  subjectNameEl.textContent = data.subject_name || "CM-1";
+  subjectHeldEl.textContent = visible
+    ? "locked " + formatClock(data.lock_seconds || 0)
+    : "briefly out of view";
 
-    row.querySelector(".crew-activity").textContent = member.activity;
-    row.querySelector(".crew-fill").style.width =
-      (member.confidence * 100).toFixed(0) + "%";
-    row.querySelector(".crew-meta b").textContent =
-      member.confidence > 0 ? (member.confidence * 100).toFixed(0) + "%" : "--";
-    row.querySelector(".crew-meta i").textContent = formatDuration(member.duration);
+  // Saying this out loud turns a single tracked person from something that
+  // looks like a limit into something that looks like a decision.
+  const ignored = data.ignored || 0;
+  subjectNoteEl.hidden = ignored === 0;
+  if (ignored) {
+    subjectNoteEl.textContent =
+      ignored + (ignored > 1 ? " other people are" : " other person is")
+      + " in frame and is not being tracked. v1 monitors one crew member,"
+      + " chosen as the one closest to the camera.";
   }
 
-  renderScores(crew.find((c) => c.name === active) || null);
+  renderScores(data.scores, activity);
 }
 
 async function pollActivity() {
   try {
     const data = await (await fetch("/api/activity", { cache: "no-store" })).json();
-    renderRoster(data);
+    renderSubject(data);
+    renderObjects(data.objects);
     renderAlert(data);
   } catch (err) {
-    crewCountEl.textContent = "link lost";
+    lockLabelEl.textContent = "LINK LOST";
+    lockPillEl.className = "lock-pill holding";
   }
 }
 
@@ -322,20 +325,6 @@ const logBodyEl = document.getElementById("log-body");
 const logStatusEl = document.getElementById("log-status");
 const logPathEl = document.getElementById("log-path");
 
-// Matches ACTIVITY_HEX in config.py, so a log row, a timeline block, a chart
-// bar and the video banner all read as the same activity. The six real
-// activities use validated categorical slots; Anomaly uses a reserved status
-// amber so an alert can never be mistaken for one more activity.
-const ACTIVITY_COLOURS = {
-  "Exercise": "#3987e5",
-  "Experiment Operation": "#d95926",
-  "Eating/Rest": "#199e70",
-  "Maintenance": "#c98500",
-  "Idle": "#d55181",
-  "In-Transit/Movement": "#008300",
-  "Anomaly (No Motion)": "#fab219",
-  "No Crew Detected": "#6E7686",
-};
 
 function formatClock(seconds) {
   const m = Math.floor(seconds / 60);
@@ -348,6 +337,7 @@ let lastTopEntry = null;
 async function pollLog() {
   try {
     const data = await (await fetch("/api/log", { cache: "no-store" })).json();
+    ensureActivities(data.order, data.colours);
     const events = data.events || [];
 
     logStatusEl.textContent =
@@ -411,12 +401,16 @@ const tooltipEl = document.getElementById("tooltip");
 
 // Fixed activity order, shared with the server. Never sorted by value: a bar
 // keeps its position and colour so the reader is not re-learning the chart.
-const CHART_ORDER = ACTIVITIES;
-
 const lanes = {};
 const bars = {};
 
-for (const name of CHART_ORDER) {
+function buildTimelineAndChart() {
+  timelineEl.innerHTML = "";
+  chartEl.innerHTML = "";
+  for (const key of Object.keys(lanes)) delete lanes[key];
+  for (const key of Object.keys(bars)) delete bars[key];
+
+  for (const name of ACTIVITIES) {
   const colour = ACTIVITY_COLOURS[name];
 
   const lane = document.createElement("div");
@@ -438,11 +432,26 @@ for (const name of CHART_ORDER) {
   row.querySelector(".bar-name").textContent = name;
   row.querySelector(".bar-fill").style.setProperty("--bar-colour", colour);
   chartEl.appendChild(row);
-  bars[name] = {
-    root: row,
-    value: row.querySelector(".bar-value"),
-    fill: row.querySelector(".bar-fill"),
-  };
+    bars[name] = {
+      root: row,
+      value: row.querySelector(".bar-value"),
+      fill: row.querySelector(".bar-fill"),
+    };
+  }
+}
+
+/* Rebuild everything the first time the server tells us the task list, and
+   again if it ever changes. */
+function ensureActivities(order, colours) {
+  if (!order || !order.length) return;
+  const signature = order.join("|");
+  if (signature === ensureActivities.signature) return;
+  ensureActivities.signature = signature;
+
+  ACTIVITIES = order;
+  ACTIVITY_COLOURS = colours || {};
+  buildScoreRows();
+  buildTimelineAndChart();
 }
 
 function showTooltip(event, activity, detail) {
@@ -472,12 +481,12 @@ const hideTooltip = () => { tooltipEl.hidden = true; };
 function renderTimeline(timeline) {
   const blocks = timeline.blocks || [];
   const grouped = {};
-  for (const name of CHART_ORDER) grouped[name] = [];
+  for (const name of ACTIVITIES) grouped[name] = [];
   for (const b of blocks) {
     if (grouped[b.activity]) grouped[b.activity].push(b);
   }
 
-  for (const name of CHART_ORDER) {
+  for (const name of ACTIVITIES) {
     const lane = lanes[name];
     const items = grouped[name];
     lane.root.classList.toggle("active", items.length > 0);
@@ -512,7 +521,7 @@ function renderTimeline(timeline) {
 
 function renderChart(totals) {
   let grand = 0, peak = 0;
-  for (const name of CHART_ORDER) {
+  for (const name of ACTIVITIES) {
     const v = totals[name] || 0;
     grand += v;
     if (v > peak) peak = v;
@@ -520,7 +529,7 @@ function renderChart(totals) {
 
   chartTotalEl.textContent = formatClock(grand);
 
-  for (const name of CHART_ORDER) {
+  for (const name of ACTIVITIES) {
     const v = totals[name] || 0;
     const bar = bars[name];
     bar.root.classList.toggle("has-data", v > 0);
@@ -617,3 +626,103 @@ setInterval(pollStatus, 1000);
 setInterval(pollTelemetry, 150);
 setInterval(pollActivity, 250);
 setInterval(pollLog, 900);
+
+/* ------------------------------------------ overlay, privacy, downloads --- */
+/* Presentation controls. None of these touch classification or logging: the
+   same frames are analysed and the same rows written whatever is toggled. */
+
+const btnSkeleton = document.getElementById("btn-skeleton");
+const btnObjects = document.getElementById("btn-objects");
+const btnPrivacy = document.getElementById("btn-privacy");
+const videoFrameEl = document.querySelector(".video-frame");
+
+const objectsEl = document.getElementById("objects");
+const objectsEmptyEl = document.getElementById("objects-empty");
+const objectStatusEl = document.getElementById("object-status");
+
+const downloadScopeEl = document.getElementById("download-scope");
+
+async function setView(payload, button) {
+  if (button) button.classList.add("is-busy");
+  try {
+    const data = await (await fetch("/api/view", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    })).json();
+    applyView(data);
+  } catch (err) {
+    /* The next status poll will show the true state. */
+  } finally {
+    if (button) button.classList.remove("is-busy");
+  }
+}
+
+function applyView(data) {
+  const privacy = data.video_mode === "privacy";
+  btnSkeleton.classList.toggle("is-on", !!data.show_skeleton);
+  btnObjects.classList.toggle("is-on", !!data.show_objects);
+  btnPrivacy.classList.toggle("is-on", privacy);
+  if (videoFrameEl) videoFrameEl.classList.toggle("privacy", privacy);
+
+  // Object boxes cannot be drawn over a suppressed video.
+  btnObjects.disabled = privacy;
+
+  const objects = data.objects || {};
+  if (!objects.enabled) {
+    objectStatusEl.textContent = "off";
+  } else if (!objects.available) {
+    objectStatusEl.textContent = "unavailable";
+  } else {
+    objectStatusEl.textContent =
+      objects.model + "  " + Math.round(objects.inference_ms) + " ms";
+  }
+}
+
+btnSkeleton.addEventListener("click", () => setView(
+  { show_skeleton: !btnSkeleton.classList.contains("is-on") }, btnSkeleton));
+btnObjects.addEventListener("click", () => setView(
+  { show_objects: !btnObjects.classList.contains("is-on") }, btnObjects));
+btnPrivacy.addEventListener("click", () => setView(
+  { video_mode: btnPrivacy.classList.contains("is-on") ? "normal" : "privacy" },
+  btnPrivacy));
+
+function renderObjects(detections) {
+  const items = detections || [];
+  objectsEmptyEl.hidden = items.length > 0;
+
+  for (const el of Array.from(objectsEl.querySelectorAll(".object-row"))) {
+    el.remove();
+  }
+  // In-hand objects first: those are the ones changing the classification.
+  const ordered = items.slice().sort(
+    (a, b) => (b.in_hand ? 1 : 0) - (a.in_hand ? 1 : 0));
+
+  for (const item of ordered) {
+    const row = document.createElement("div");
+    row.className = "object-row" + (item.in_hand ? " in-hand" : "");
+    row.innerHTML =
+      '<span class="object-dot"></span>' +
+      '<span class="object-name"></span>' +
+      '<span class="object-held"></span>' +
+      '<span class="object-conf"></span>';
+    row.querySelector(".object-name").textContent = item.name;
+    row.querySelector(".object-held").textContent = item.in_hand ? "IN HAND" : "";
+    row.querySelector(".object-conf").textContent =
+      (item.confidence * 100).toFixed(0) + "%";
+    objectsEl.appendChild(row);
+  }
+}
+
+function download(kind) {
+  const scope = downloadScopeEl ? downloadScopeEl.value : "session";
+  // A plain navigation, so the browser saves the file the server names.
+  window.location.href = "/api/download?kind=" + kind + "&scope=" + scope;
+}
+
+document.getElementById("btn-csv")
+  .addEventListener("click", () => download("csv"));
+document.getElementById("btn-json")
+  .addEventListener("click", () => download("json"));
+document.getElementById("btn-report")
+  .addEventListener("click", () => download("report"));

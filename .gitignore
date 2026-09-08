@@ -26,3 +26,7 @@ dataset/**/*.mp4
 
 # Saved evaluation runs are local scratch, not project history.
 dataset/_results/
+
+# Ultralytics drops a copy of the weights in the working directory on first
+# use; the copy the app loads lives in models/.
+/yolov8n.pt

@@ -33,16 +33,21 @@ class NormalisedPose:
     """One frame of pose, expressed in the body-local frame of reference."""
 
     __slots__ = ("timestamp", "points", "hip_center", "torso_length",
-                 "spine_angle", "confidence")
+                 "spine_angle", "confidence", "visibility")
 
     def __init__(self, timestamp, points, hip_center, torso_length,
-                 spine_angle, confidence):
+                 spine_angle, confidence, visibility=None):
         self.timestamp = timestamp
         self.points = points              # (33, 2) torso-relative coordinates
         self.hip_center = hip_center      # raw image position, for reference
         self.torso_length = torso_length  # raw image scale, for reference
         self.spine_angle = spine_angle    # degrees from vertical
         self.confidence = confidence
+        # Per-landmark visibility, kept because "the model cannot see the
+        # legs" is a different statement from "the legs are near the hips",
+        # and posture detection has to tell those two apart.
+        self.visibility = (visibility if visibility is not None
+                           else np.ones(len(points), dtype=np.float32))
 
 
 def normalise(landmarks, frame_width: int, frame_height: int):
@@ -111,6 +116,7 @@ def normalise(landmarks, frame_width: int, frame_height: int):
         torso_length=torso_length,
         spine_angle=spine_angle,
         confidence=anchor_confidence,
+        visibility=visibility,
     )
 
 
