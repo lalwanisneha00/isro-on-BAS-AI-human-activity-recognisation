@@ -27,9 +27,17 @@ hidden behind a desk:
 1. Full body visible - knee angle, and how far the hips sit above the ankles.
    A standing leg is close to straight and the hips ride high; a seated one
    folds toward a right angle and the hips drop to roughly knee height.
-2. Lower body hidden - fall back to what is left: the torso occupies a
-   smaller slice of the frame than a standing person at the same apparent
-   size, the hips barely move, and the spine stays upright.
+2. Lower body hidden - which is the normal case at a desk - ask whether the
+   legs SHOULD have been visible. If there is room in the frame below the
+   hips for standing legs and no legs are detected in it, they are not
+   missing, they are folded: the crew member is sitting. If the frame stops
+   just below the hips the legs were simply cropped, nothing can be inferred,
+   and the reading says so instead of guessing.
+
+Route 2 used to score "hips still, spine upright, body short in frame", which
+describes a person standing at a desk exactly as well as a seated one, and it
+flip-flopped between the two on live video. The frame-room test replaces it
+because it measures something that actually differs between the two.
 """
 
 import math
@@ -64,7 +72,7 @@ class PostureReading:
 
     __slots__ = ("posture", "confidence", "seated", "knee_angle",
                  "hip_above_ankle", "lower_body_visible", "hip_stability",
-                 "spine_upright", "basis")
+                 "spine_upright", "leg_room", "basis")
 
     def as_dict(self) -> dict:
         return {
@@ -77,6 +85,7 @@ class PostureReading:
             "lower_body_visible": self.lower_body_visible,
             "hip_stability": round(self.hip_stability, 4),
             "spine_upright": round(self.spine_upright, 1),
+            "leg_room": round(self.leg_room, 2),
             "basis": self.basis,
         }
 
@@ -91,6 +100,7 @@ def _blank(basis: str) -> PostureReading:
     reading.lower_body_visible = False
     reading.hip_stability = 0.0
     reading.spine_upright = 0.0
+    reading.leg_room = 0.0
     reading.basis = basis
     return reading
 
@@ -110,11 +120,16 @@ def read(window) -> PostureReading:
 
     reading = _blank("")
 
-    # How still the hips are, in torso lengths across the window. A seated or
-    # restrained person's hips barely travel; a standing one sways.
-    hips = (points[:, L_HIP, :] + points[:, R_HIP, :]) / 2.0
-    reading.hip_stability = float(np.linalg.norm(hips.max(axis=0)
-                                                 - hips.min(axis=0)))
+    # How far the hips actually travel across the window.
+    #
+    # This has to come from the RAW frame position. Normalisation pins the hip
+    # midpoint to the origin by definition, so measuring it on the normalised
+    # points returns zero however much the crew member moves - which meant the
+    # "settled" evidence was silently constant and carried no information.
+    raw_hips = np.array([f.hip_center for f in frames])
+    span = float(np.linalg.norm(raw_hips.max(axis=0) - raw_hips.min(axis=0)))
+    scale = max(frames[-1].torso_length, config.MIN_TORSO_LENGTH)
+    reading.hip_stability = span / scale
 
     # Spine tilt away from vertical. Normalisation pins the spine to "up", so
     # this is measured on the raw per-frame angle instead.
@@ -172,26 +187,46 @@ def read(window) -> PostureReading:
         reading.basis = ("knee angle and hip height" if angle_trust > 0.5
                          else "hip height (thigh foreshortened head-on)")
     else:
-        # --- route 2: legs hidden, work with the torso --------------------
-        # Without legs the giveaway is that a seated person's visible body is
-        # short and does not move: the hips stay put and the spine stays up.
+        # --- route 2: the legs are not visible -----------------------------
+        #
+        # Two quite different situations hide behind "no legs", and they need
+        # different answers.
+        latest_frame = frames[-1]
+        hip_y = latest_frame.hip_center[1]
+        shoulder_span = float(np.linalg.norm(latest[L_SHOULDER]
+                                             - latest[R_SHOULDER]))
+        scale = max(shoulder_span * latest_frame.torso_length, 1e-3)
+        # Negative means the hips are below the bottom edge entirely.
+        reading.leg_room = max(0.0, float((1.0 - hip_y) / scale))
+
         settled = _falling(reading.hip_stability, config.SEATED_HIP_TRAVEL,
                            config.SEATED_HIP_TRAVEL * 3.0)
         upright = _falling(reading.spine_upright, config.UPRIGHT_TOLERANCE,
                            config.UPRIGHT_TOLERANCE * 2.5)
 
-        # How much of the frame the body occupies. Someone at a desk shows
-        # torso and head only, so their visible extent is short relative to
-        # their torso length.
-        visible = points[-1]
-        extent = float(visible[:, 1].max() - visible[:, 1].min())
-        cropped = _falling(extent, config.SEATED_VISIBLE_EXTENT,
-                           config.SEATED_VISIBLE_EXTENT + 0.9)
-
-        score = 0.40 * settled + 0.25 * upright + 0.35 * cropped
-        # Legs unseen means real uncertainty; say so rather than overclaiming.
-        score *= 0.75
-        reading.basis = "torso only - lower body not visible"
+        if reading.leg_room >= config.LEG_ROOM_AMBIGUOUS:
+            # There is clear frame below the hips where standing legs would
+            # have appeared, and nothing appeared in it. The legs are folded,
+            # not cropped: this is sitting, and it is close to a measurement.
+            room = _ramp(reading.leg_room, config.LEG_ROOM_AMBIGUOUS,
+                         config.LEG_ROOM_CLEAR)
+            score = (0.70 * room + 0.18 * settled + 0.12 * upright) * 0.92
+            reading.basis = (f"legs absent from {reading.leg_room:.1f} shoulder "
+                             f"widths of clear frame below the hips")
+        else:
+            # The hips sit at or below the bottom edge - the ordinary view
+            # from a laptop webcam. Nothing in the picture can separate
+            # sitting from standing here, and pretending otherwise is how
+            # this used to announce "Standing" at somebody plainly sat down.
+            #
+            # What can still be measured is the thing the mission actually
+            # cares about: whether the crew member is settled at a station.
+            # Hips that do not travel and a torso that stays upright mean
+            # settled, whether they are in a chair or in foot restraints.
+            score = (0.62 * settled + 0.38 * upright) * 0.72
+            reading.basis = ("upper body only - settled at a workstation "
+                             "(sitting cannot be separated from standing "
+                             "without the legs)")
 
     reading.seated = score >= config.SEATED_THRESHOLD
     reading.confidence = round(min(0.99, 0.35 + 0.64 * score), 3)
@@ -203,6 +238,13 @@ def read(window) -> PostureReading:
     else:
         reading.posture = STANDING
     return reading
+
+
+def _ramp(value: float, low: float, high: float) -> float:
+    """0 at or below `low`, 1 at or above `high`."""
+    if high <= low:
+        return 0.0
+    return max(0.0, min(1.0, (value - low) / (high - low)))
 
 
 def _falling(value: float, low: float, high: float) -> float:

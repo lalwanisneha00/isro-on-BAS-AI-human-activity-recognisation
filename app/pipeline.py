@@ -279,9 +279,13 @@ class ProcessingPipeline:
                 # whatever the overlay toggle says.
                 if config.SHOW_SKELETON or config.VIDEO_MODE == "privacy":
                     frame = draw_skeleton(frame, self.landmarks, colour)
+                reading = self.subject.classifier.posture
+                posture = ""
+                if reading is not None and reading.seated:
+                    posture = "Seated"
                 draw_subject_tag(frame, self.landmarks, self.subject.label,
                                  self.subject.confidence, colour,
-                                 self.subject.ignored)
+                                 self.subject.ignored, posture)
 
             with self._lock:
                 self._output = frame

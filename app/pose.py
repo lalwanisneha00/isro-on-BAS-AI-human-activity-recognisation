@@ -134,7 +134,7 @@ def draw_skeleton(frame: np.ndarray, landmarks, colour=None) -> np.ndarray:
 
 
 def draw_subject_tag(frame, landmarks, activity: str, confidence: float,
-                     colour, ignored: int = 0) -> None:
+                     colour, ignored: int = 0, posture: str = "") -> None:
     """Label the monitored subject on the video, above their head.
 
     The tag says who is being followed and what they are doing, so it is
@@ -153,7 +153,10 @@ def draw_subject_tag(frame, landmarks, activity: str, confidence: float,
     centre = int(sum(xs) / len(xs))
     top = int(min(ys))
 
-    text = f"SUBJECT LOCKED - {activity.upper()}  {confidence:.0%}"
+    # Posture first, then the task: "SEATED - LAPTOP WORK".
+    described = f"{posture.upper()} - {activity.upper()}" if posture \
+        else activity.upper()
+    text = f"SUBJECT LOCKED - {described}  {confidence:.0%}"
     scale, thickness = 0.46, 1
     (text_w, text_h), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX,
                                           scale, thickness)

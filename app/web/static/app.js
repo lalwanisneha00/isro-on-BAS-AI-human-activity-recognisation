@@ -199,6 +199,8 @@ const lockLabelEl = document.getElementById("lock-label");
 const subjectEmptyEl = document.getElementById("subject-empty");
 const subjectBodyEl = document.getElementById("subject-body");
 const subjectActivityEl = document.getElementById("subject-activity");
+const postureChipEl = document.getElementById("posture-chip");
+const postureTextEl = document.getElementById("posture-text");
 const subjectConfEl = document.getElementById("subject-conf");
 const subjectConfFillEl = document.getElementById("subject-conf-fill");
 const subjectNameEl = document.getElementById("subject-name");
@@ -274,8 +276,23 @@ function renderSubject(data) {
   actPanelEl.classList.toggle("alert", !!data.is_anomaly);
 
   if (!locked) {
+    postureChipEl.hidden = true;
     renderScores(null, null);
     return;
+  }
+
+  // Posture rides alongside the activity rather than competing with it, so
+  // the panel can say "Seated" and "Laptop Work" at the same time.
+  const posture = data.posture;
+  const knownPosture = posture && posture.posture
+    && posture.posture !== "Unknown"
+    && !(posture.basis || "").includes("cannot be determined");
+  postureChipEl.hidden = !knownPosture;
+  if (knownPosture) {
+    postureTextEl.textContent =
+      posture.posture + "  " + Math.round(posture.confidence * 100) + "%";
+    postureChipEl.classList.toggle("uncertain", !posture.seated);
+    postureChipEl.title = posture.basis || "";
   }
 
   const colour = ACTIVITY_COLOURS[activity] || "#6E7686";

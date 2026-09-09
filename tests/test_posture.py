@@ -104,6 +104,106 @@ def run() -> Results:
     r.note(f"seated hips {seated.hip_above_ankle:.2f} above ankles vs "
            f"standing {standing.hip_above_ankle:.2f}")
 
+    # ---- the real webcam case, from a live capture ------------------------
+    # These are measured MediaPipe outputs for somebody sitting at a laptop:
+    # head and torso in shot, knees and ankles collapsed onto the hips with
+    # visibility around 0.1 because the model cannot see them. This is the
+    # case that was being called Standing, and the synthetic bodies above did
+    # not reproduce it - which is why it went unnoticed.
+    def webcam_body(hip_y, shoulder_y, nose_y, legs_seen=False):
+        p = np.zeros((33, 2), dtype=np.float64)
+        p[11] = (0.652, shoulder_y + 0.041); p[12] = (0.596, shoulder_y - 0.041)
+        p[23] = (0.540, hip_y + 0.025); p[24] = (0.515, hip_y - 0.025)
+        p[0] = (0.616, nose_y)
+        p[7] = (0.585, nose_y - 0.01); p[8] = (0.645, nose_y - 0.01)
+        p[9] = (0.600, nose_y + 0.02); p[10] = (0.632, nose_y + 0.02)
+        p[13] = (0.700, shoulder_y + 0.09); p[14] = (0.556, shoulder_y + 0.09)
+        p[15] = (0.690, shoulder_y + 0.15); p[16] = (0.566, shoulder_y + 0.15)
+        if legs_seen:
+            p[25] = (0.529, hip_y + 0.16); p[26] = (0.517, hip_y + 0.16)
+            p[27] = (0.537, hip_y + 0.31); p[28] = (0.528, hip_y + 0.31)
+        else:
+            # What MediaPipe actually does: it guesses them onto the hips.
+            p[25] = (0.529, hip_y + 0.03); p[26] = (0.517, hip_y - 0.01)
+            p[27] = (0.537, hip_y + 0.02); p[28] = (0.528, hip_y - 0.01)
+
+        vis = np.ones(33, dtype=np.float32)
+        if not legs_seen:
+            for i in (25, 26, 27, 28, 29, 30, 31, 32):
+                vis[i] = 0.11
+        return p, vis
+
+    def feed_raw(points, visibility, seconds=3.0):
+        window = PoseWindow()
+        base = 5000.0
+        for i in range(int(seconds * FPS)):
+            landmarks = [Landmark(v[0], v[1], float(visibility[j]))
+                         for j, v in enumerate(points)]
+            pose = normalise(landmarks, W, H)
+            if pose is not None:
+                pose.timestamp = base + i / FPS
+                window.push(pose)
+        return window
+
+    # Sitting at a laptop: hips at 0.696, so there is clear frame below them
+    # where standing legs would have appeared. They did not, so: seated.
+    at_desk = read(feed_raw(*webcam_body(hip_y=0.696, shoulder_y=0.603,
+                                         nose_y=0.608)))
+    r.check(at_desk.seated,
+            "sitting at a laptop, upper body only, is recognised as seated",
+            f"{at_desk.posture} - {at_desk.basis}")
+    r.check(at_desk.leg_room > config.LEG_ROOM_CLEAR,
+            "the clear frame below the hips is measured",
+            f"leg_room {at_desk.leg_room:.2f}")
+    r.note(f"real capture: {at_desk.leg_room:.1f} shoulder widths of empty frame "
+           f"below the hips, no legs in it")
+
+    # Hips below the bottom edge - the ordinary laptop webcam view. Sitting
+    # cannot be separated from standing here, so the reading falls back to
+    # what IS measurable: whether the crew member is settled at a station.
+    # Somebody still and upright reads as settled...
+    cropped = read(feed_raw(*webcam_body(hip_y=0.94, shoulder_y=0.60,
+                                         nose_y=0.50)))
+    r.check(cropped.seated,
+            "hips below frame, still and upright, reads as settled at a station",
+            f"{cropped.posture} - {cropped.basis}")
+    r.check("cannot be separated" in cropped.basis,
+            "and the reading states plainly that the legs were not seen",
+            cropped.basis)
+    r.check(cropped.confidence < at_desk.confidence,
+            "with less evidence it is less confident",
+            f"{cropped.confidence} vs {at_desk.confidence}")
+
+    # ...but somebody moving about does not. This is the guard that keeps the
+    # fallback from labelling everyone seated.
+    def moving_window(seconds=3.0):
+        window = PoseWindow()
+        base = 6000.0
+        for i in range(int(seconds * FPS)):
+            t = i / FPS
+            pts, vis = webcam_body(hip_y=0.94, shoulder_y=0.60, nose_y=0.50)
+            pts[:, 0] += 0.10 * t          # travelling across the frame
+            landmarks = [Landmark(v[0], v[1], float(vis[j]))
+                         for j, v in enumerate(pts)]
+            pose = normalise(landmarks, W, H)
+            if pose is not None:
+                pose.timestamp = base + t
+                window.push(pose)
+        return window
+
+    moving = read(moving_window())
+    r.check(not moving.seated,
+            "somebody moving across the module is not called settled",
+            f"{moving.posture} - hip travel {moving.hip_stability:.3f}")
+
+    # The same webcam framing, but the legs really are visible and extended:
+    # that is a standing person and the legs settle it.
+    standing_seen = read(feed_raw(*webcam_body(hip_y=0.55, shoulder_y=0.42,
+                                               nose_y=0.36, legs_seen=True)))
+    r.check(not standing_seen.seated,
+            "with legs visible and extended, standing is recognised",
+            f"{standing_seen.posture} - {standing_seen.basis}")
+
     # ---- legs hidden behind a desk ----------------------------------------
     hidden = read(feed(hidden_pts, hidden_vis))
     r.check(not hidden.lower_body_visible,

@@ -386,3 +386,16 @@ HAND_TO_MOUTH_TRAVEL = 0.28
 
 # Cores the object model may use. The video pipeline needs the rest.
 YOLO_THREADS = 2
+
+# When the legs are not visible, posture is decided by how much clear frame
+# sits below the hips, in torso lengths. Standing legs run about two torso
+# lengths below the hips, so:
+#   below LEG_ROOM_AMBIGUOUS - the frame stops near the hips, the legs were
+#                              cropped, and nothing can be inferred
+#   above LEG_ROOM_CLEAR     - there was ample room and no legs appeared in
+#                              it, so they are folded: seated
+# Measured in shoulder widths. From a live capture of somebody at a laptop:
+# 2.4 shoulder widths of empty frame below the hips. Somebody standing and
+# cropped at the waist measures about 0.5.
+LEG_ROOM_AMBIGUOUS = 1.10
+LEG_ROOM_CLEAR = 1.90
