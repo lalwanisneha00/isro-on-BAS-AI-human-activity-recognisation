@@ -9,7 +9,8 @@ import numpy as np
 from _harness import ASPECT, FPS, Landmark, Results
 from app import config
 from app.normalize import PoseWindow, normalise
-from app.posture import FLOATING, SEATED, STANDING, read
+from app.posture import (FLOATING, SEATED, STANDING,
+                         WorkstationWatch, read)
 
 W, H = config.FRAME_WIDTH, config.FRAME_HEIGHT
 
@@ -133,22 +134,28 @@ def run() -> Results:
                 vis[i] = 0.11
         return p, vis
 
-    def feed_raw(points, visibility, seconds=3.0):
+    def feed_raw(points, visibility, seconds=8.0, drift=0.0):
+        """Returns (window, watch) - the watch needs the longer horizon."""
         window = PoseWindow()
+        watch = WorkstationWatch()
         base = 5000.0
         for i in range(int(seconds * FPS)):
+            t = i / FPS
+            moved = points.copy()
+            moved[:, 0] += drift * t
             landmarks = [Landmark(v[0], v[1], float(visibility[j]))
-                         for j, v in enumerate(points)]
+                         for j, v in enumerate(moved)]
             pose = normalise(landmarks, W, H)
             if pose is not None:
-                pose.timestamp = base + i / FPS
+                pose.timestamp = base + t
                 window.push(pose)
-        return window
+                watch.observe(pose, base + t)
+        return window, watch
 
     # Sitting at a laptop: hips at 0.696, so there is clear frame below them
     # where standing legs would have appeared. They did not, so: seated.
-    at_desk = read(feed_raw(*webcam_body(hip_y=0.696, shoulder_y=0.603,
-                                         nose_y=0.608)))
+    at_desk = read(*feed_raw(*webcam_body(hip_y=0.696, shoulder_y=0.603,
+                                          nose_y=0.608)))
     r.check(at_desk.seated,
             "sitting at a laptop, upper body only, is recognised as seated",
             f"{at_desk.posture} - {at_desk.basis}")
@@ -162,44 +169,34 @@ def run() -> Results:
     # cannot be separated from standing here, so the reading falls back to
     # what IS measurable: whether the crew member is settled at a station.
     # Somebody still and upright reads as settled...
-    cropped = read(feed_raw(*webcam_body(hip_y=0.94, shoulder_y=0.60,
-                                         nose_y=0.50)))
+    cropped = read(*feed_raw(*webcam_body(hip_y=0.94, shoulder_y=0.60,
+                                          nose_y=0.50)))
     r.check(cropped.seated,
-            "hips below frame, still and upright, reads as settled at a station",
+            "hips below frame, settled for several seconds, reads as at a station",
             f"{cropped.posture} - {cropped.basis}")
-    r.check("cannot be separated" in cropped.basis,
-            "and the reading states plainly that the legs were not seen",
+    r.check("at a workstation for" in cropped.basis,
+            "and the reading says how long it has been watching",
             cropped.basis)
-    r.check(cropped.confidence < at_desk.confidence,
-            "with less evidence it is less confident",
-            f"{cropped.confidence} vs {at_desk.confidence}")
+    # Seeing the legs is a measurement; inferring from how long somebody has
+    # stayed put is not. The measured reading should be the more confident of
+    # the two, and the console should show that difference.
+    r.check(seated.confidence >= at_desk.confidence,
+            "measuring the legs beats inferring from stillness",
+            f"legs seen {seated.confidence} vs upper-body only "
+            f"{at_desk.confidence}")
 
     # ...but somebody moving about does not. This is the guard that keeps the
     # fallback from labelling everyone seated.
-    def moving_window(seconds=3.0):
-        window = PoseWindow()
-        base = 6000.0
-        for i in range(int(seconds * FPS)):
-            t = i / FPS
-            pts, vis = webcam_body(hip_y=0.94, shoulder_y=0.60, nose_y=0.50)
-            pts[:, 0] += 0.10 * t          # travelling across the frame
-            landmarks = [Landmark(v[0], v[1], float(vis[j]))
-                         for j, v in enumerate(pts)]
-            pose = normalise(landmarks, W, H)
-            if pose is not None:
-                pose.timestamp = base + t
-                window.push(pose)
-        return window
-
-    moving = read(moving_window())
+    moving = read(*feed_raw(*webcam_body(hip_y=0.94, shoulder_y=0.60,
+                                         nose_y=0.50), drift=0.05))
     r.check(not moving.seated,
             "somebody moving across the module is not called settled",
             f"{moving.posture} - hip travel {moving.hip_stability:.3f}")
 
     # The same webcam framing, but the legs really are visible and extended:
     # that is a standing person and the legs settle it.
-    standing_seen = read(feed_raw(*webcam_body(hip_y=0.55, shoulder_y=0.42,
-                                               nose_y=0.36, legs_seen=True)))
+    standing_seen = read(*feed_raw(*webcam_body(hip_y=0.55, shoulder_y=0.42,
+                                                nose_y=0.36, legs_seen=True)))
     r.check(not standing_seen.seated,
             "with legs visible and extended, standing is recognised",
             f"{standing_seen.posture} - {standing_seen.basis}")

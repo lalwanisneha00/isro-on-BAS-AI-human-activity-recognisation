@@ -34,11 +34,12 @@ class NormalisedPose:
 
     __slots__ = ("timestamp", "points", "hip_center", "torso_length",
                  "spine_angle", "confidence", "visibility",
-                 "hips_estimated", "framing")
+                 "hips_estimated", "framing", "shoulder_center")
 
     def __init__(self, timestamp, points, hip_center, torso_length,
                  spine_angle, confidence, visibility=None,
-                 hips_estimated=False, framing="full"):
+                 hips_estimated=False, framing="full",
+                 shoulder_center=(0.0, 0.0)):
         self.timestamp = timestamp
         self.points = points              # (33, 2) torso-relative coordinates
         self.hip_center = hip_center      # raw image position, for reference
@@ -58,6 +59,11 @@ class NormalisedPose:
         # "upper" - torso and both arms, the ordinary webcam view
         # "torso" - head, shoulders and part of the arms only
         self.framing = framing
+        # Raw shoulder midpoint in the frame. This is the anchor for judging
+        # whether somebody has left their station: a reconstructed hip sits
+        # more than a shoulder width below them, so it swings whenever they
+        # lean and exaggerates movement they did not make.
+        self.shoulder_center = shoulder_center
 
 
 def normalise(landmarks, frame_width: int, frame_height: int):
@@ -189,6 +195,8 @@ def normalise(landmarks, frame_width: int, frame_height: int):
         visibility=visibility,
         hips_estimated=hips_estimated,
         framing=framing,
+        shoulder_center=(float(shoulder_center[0] / aspect),
+                         float(shoulder_center[1])),
     )
 
 

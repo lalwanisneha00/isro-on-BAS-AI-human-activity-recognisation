@@ -14,7 +14,7 @@ import time
 
 from . import config
 from .features import extract
-from .posture import read as read_posture
+from .posture import WorkstationWatch, read as read_posture
 
 
 def _ramp(value: float, low: float, high: float) -> float:
@@ -293,6 +293,9 @@ class ActivityClassifier:
         self._still_since = None
         self._last_face_contact = None
         self.posture = None
+        # Watches over a far longer horizon than the classification window,
+        # because being settled at a station is a matter of duration.
+        self.workstation = WorkstationWatch()
 
     # ------------------------------------------------------------- helpers --
     @property
@@ -321,6 +324,7 @@ class ActivityClassifier:
         works from pose alone, which is the normal case.
         """
         if window.count == 0:
+            self.workstation.observe(None, time.time())
             self.scores, self.features = {}, None
             self._candidate, self._candidate_count = None, 0
             self._still_since = None
@@ -335,7 +339,9 @@ class ActivityClassifier:
 
         features = extract(window)
         self.features = features
-        self.posture = read_posture(window)
+
+        self.workstation.observe(window.latest, time.time())
+        self.posture = read_posture(window, self.workstation)
 
         # Remember the last time a hand was up at the mouth, so the meal label
         # holds through the hand-down phase of each bite.

@@ -417,3 +417,18 @@ TORSO_PER_SHOULDER = 1.55
 # Both wrists visible means the whole of both arms is in shot, which is a
 # good deal more to work with than head and shoulders alone.
 WRIST_VISIBILITY_MIN = 0.55
+
+# --------------------------------------------------- workstation watch -----
+# Being settled at a station is a duration, not a shape: two seconds cannot
+# tell somebody who has sat down to work from somebody paused mid-stride.
+# These govern the longer view that can.
+WORKSTATION_HORIZON = 15.0        # seconds of history kept
+WORKSTATION_MIN_SPAN = 4.0        # before which nothing is claimed
+WORKSTATION_GAP = 2.5             # absence that discards the history
+# Drift of the body, in shoulder widths, across the horizon.
+WORKSTATION_TRAVEL_SETTLED = 1.10
+WORKSTATION_TRAVEL_MOVING = 3.20
+# The band in front of the body where hands rest when working, torso units.
+WORKING_ZONE_HALF_WIDTH = 0.95
+WORKING_ZONE_TOP = -1.35
+WORKING_ZONE_BOTTOM = 0.15

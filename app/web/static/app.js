@@ -312,8 +312,12 @@ function renderSubject(data) {
     && !(posture.basis || "").includes("cannot be determined");
   postureChipEl.hidden = !knownPosture;
   if (knownPosture) {
+    // When the decision rests on how long somebody has stayed put, say so:
+    // the evidence is the duration, so the duration belongs on screen.
+    const watched = posture.settled_seconds || 0;
     postureTextEl.textContent =
-      posture.posture + "  " + Math.round(posture.confidence * 100) + "%";
+      posture.posture + "  " + Math.round(posture.confidence * 100) + "%"
+      + (watched >= 1 ? "  ·  " + Math.round(watched) + "s at station" : "");
     postureChipEl.classList.toggle("uncertain", !posture.seated);
     postureChipEl.title = posture.basis || "";
   }

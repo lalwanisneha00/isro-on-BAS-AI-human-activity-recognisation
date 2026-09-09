@@ -41,6 +41,7 @@ because it measures something that actually differs between the two.
 """
 
 import math
+from collections import deque
 
 import numpy as np
 
@@ -55,6 +56,107 @@ STANDING = "Standing"
 SEATED = "Seated"
 FLOATING = "Free-floating"
 UNKNOWN = "Unknown"
+
+
+class WorkstationWatch:
+    """Evidence, gathered over far longer than one window, that the crew
+    member is settled at a workstation.
+
+    Being at a station is not a shape, it is a duration. Two seconds cannot
+    tell a person who has sat down to work from one who has paused mid-stride,
+    because both look identical for two seconds. Over fifteen they do not:
+    somebody working stays in one place with their hands in front of them,
+    and somebody standing drifts.
+
+    Nothing here needs the hips, the legs, or the face. It uses the shoulders,
+    which are the most reliably located landmarks on a half-framed person, and
+    the hands, which are what a workstation is for.
+    """
+
+    def __init__(self, horizon: float = None):
+        self.horizon = horizon or config.WORKSTATION_HORIZON
+        self._samples = deque()          # (time, anchor xy, hands working)
+
+    def reset(self) -> None:
+        self._samples.clear()
+
+    def observe(self, pose, now: float) -> None:
+        """Take one frame. `pose` may be None when nobody was detected."""
+        if pose is None:
+            # A gap does not discard the history - somebody reaching off to
+            # the side for a moment has not left their station - but a long
+            # absence does, further down.
+            if self._samples and now - self._samples[-1][0] > config.WORKSTATION_GAP:
+                self._samples.clear()
+            return
+
+        points = pose.points
+        # Anchored on the shoulders, which are both visible and stable. A
+        # reconstructed hip hangs more than a shoulder width below them, so
+        # it swings whenever the crew member leans over their work and
+        # reports travel they never made.
+        anchor = pose.shoulder_center
+        shoulder_width = float(np.linalg.norm(points[L_SHOULDER]
+                                              - points[R_SHOULDER]))
+
+        wrists = points[[15, 16]]
+        working = bool(np.any(
+            (np.abs(wrists[:, 0]) < config.WORKING_ZONE_HALF_WIDTH)
+            & (wrists[:, 1] > config.WORKING_ZONE_TOP)
+            & (wrists[:, 1] < config.WORKING_ZONE_BOTTOM)))
+
+        self._samples.append((now, anchor, working, shoulder_width, pose.torso_length))
+        cutoff = now - self.horizon
+        while self._samples and self._samples[0][0] < cutoff:
+            self._samples.popleft()
+
+    # ------------------------------------------------------------ readings --
+    @property
+    def span(self) -> float:
+        if len(self._samples) < 2:
+            return 0.0
+        return self._samples[-1][0] - self._samples[0][0]
+
+    @property
+    def travel(self) -> float:
+        """How far the crew member drifted, in shoulder widths."""
+        if len(self._samples) < 2:
+            return 0.0
+        anchors = np.array([s[1] for s in self._samples])
+        span = float(np.linalg.norm(anchors.max(axis=0) - anchors.min(axis=0)))
+        # Shoulder width in the same frame units as the anchor positions.
+        width = float(np.median([s[3] * s[4] for s in self._samples]))
+        return span / max(width, 1e-4)
+
+    @property
+    def hands_working(self) -> float:
+        if not self._samples:
+            return 0.0
+        return float(np.mean([1.0 if s[2] else 0.0 for s in self._samples]))
+
+    def evidence(self) -> float:
+        """0 to 1: how strongly this looks like somebody settled to work."""
+        if self.span < config.WORKSTATION_MIN_SPAN:
+            return 0.0                   # not watched long enough to say
+
+        # Staying put is the main thing, hands in the working zone confirms
+        # it. Somebody standing still empty-handed scores lower than somebody
+        # sat working, which is the distinction that matters.
+        stayed = _falling(self.travel, config.WORKSTATION_TRAVEL_SETTLED,
+                          config.WORKSTATION_TRAVEL_MOVING)
+        hands = _ramp(self.hands_working, 0.35, 0.80)
+        # Confidence grows with how long the evidence has been accumulating.
+        maturity = _ramp(self.span, config.WORKSTATION_MIN_SPAN,
+                         self.horizon * 0.75)
+        return stayed * (0.62 + 0.38 * hands) * (0.70 + 0.30 * maturity)
+
+    def as_dict(self) -> dict:
+        return {
+            "watching_for": round(self.span, 1),
+            "travel": round(self.travel, 2),
+            "hands_working": round(self.hands_working, 2),
+            "evidence": round(self.evidence(), 3),
+        }
 
 
 def _angle(a, b, c) -> float:
@@ -72,7 +174,8 @@ class PostureReading:
 
     __slots__ = ("posture", "confidence", "seated", "knee_angle",
                  "hip_above_ankle", "lower_body_visible", "hip_stability",
-                 "spine_upright", "leg_room", "framing", "basis")
+                 "spine_upright", "leg_room", "framing", "settled_seconds",
+                 "travel", "basis")
 
     def as_dict(self) -> dict:
         return {
@@ -87,6 +190,8 @@ class PostureReading:
             "spine_upright": round(self.spine_upright, 1),
             "leg_room": round(self.leg_room, 2),
             "framing": self.framing,
+            "settled_seconds": round(self.settled_seconds, 1),
+            "travel": round(self.travel, 2),
             "basis": self.basis,
         }
 
@@ -103,11 +208,13 @@ def _blank(basis: str) -> PostureReading:
     reading.spine_upright = 0.0
     reading.leg_room = 0.0
     reading.framing = "unknown"
+    reading.settled_seconds = 0.0
+    reading.travel = 0.0
     reading.basis = basis
     return reading
 
 
-def read(window) -> PostureReading:
+def read(window, workstation=None) -> PostureReading:
     """Decide the subject's posture from a window of normalised poses.
 
     Everything is measured in torso lengths, so the answer does not change
@@ -234,19 +341,37 @@ def read(window) -> PostureReading:
             # cares about: whether the crew member is settled at a station.
             # Hips that do not travel and a torso that stays upright mean
             # settled, whether they are in a chair or in foot restraints.
-            score = (0.62 * settled + 0.38 * upright) * 0.72
+            # Nothing in a two second window separates sitting from standing
+            # once the legs are gone. What does separate them is time: over
+            # fifteen seconds, somebody settled to work stays put with their
+            # hands in front of them, and somebody on their feet does not.
             seen = ("head, shoulders and part of the arms"
                     if reading.framing == "torso" else "upper body and arms")
-            reading.basis = (f"{seen} in shot - settled at a workstation "
-                             "(sitting cannot be separated from standing "
-                             "without the legs)")
+
+            long_view = workstation.evidence() if workstation is not None else 0.0
+            if long_view > 0.0:
+                reading.settled_seconds = workstation.span
+                reading.travel = workstation.travel
+                # The long view carries the decision; the window only refines.
+                score = 0.78 * long_view + 0.22 * (0.6 * settled + 0.4 * upright)
+                reading.basis = (
+                    f"{seen} in shot - at a workstation for "
+                    f"{workstation.span:.0f}s, drifting "
+                    f"{workstation.travel:.1f} shoulder widths")
+            else:
+                score = (0.62 * settled + 0.38 * upright) * 0.60
+                reading.basis = (f"{seen} in shot - gathering evidence "
+                                 "of a settled posture")
 
     reading.seated = score >= config.SEATED_THRESHOLD
     reading.confidence = round(min(0.99, 0.35 + 0.64 * score), 3)
 
     if reading.seated:
         reading.posture = SEATED
-    elif reading.hip_stability > config.SEATED_HIP_TRAVEL * 4.0:
+    elif (workstation is not None
+          and workstation.travel > config.WORKSTATION_TRAVEL_MOVING):
+        # Drifting across the module, judged over the long horizon. Two
+        # seconds of leaning is not the same as having left the station.
         reading.posture = FLOATING
     else:
         reading.posture = STANDING
