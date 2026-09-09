@@ -42,6 +42,11 @@ class ProcessingPipeline:
         self.subject = SubjectLock()
         self.objects = ObjectDetector()
         self.detections = []
+        # Somebody the detector can see but the pipeline cannot use, because
+        # too little of them is in shot to build a body frame from. That is a
+        # different thing from an empty module, and the console should not
+        # report the two the same way.
+        self.too_tight = False
         self.logger = ActivityLogger()
         self.pose_detected = False
         self.landmarks = None
@@ -117,6 +122,9 @@ class ProcessingPipeline:
                 return (f"Subject locked - ignoring {self.subject.ignored} "
                         f"other{'s' if self.subject.ignored > 1 else ''} in frame")
             return "Subject locked - 33 landmarks"
+        if self.too_tight:
+            return ("Crew member visible but framed too tightly - "
+                    "shoulders needed to read posture")
         if self.subject.locked:
             return "Subject briefly out of view - holding lock"
         return "No crew member in frame"
@@ -150,6 +158,9 @@ class ProcessingPipeline:
     def activity(self) -> dict:
         """The monitored subject's activity, and the alert state."""
         state = self.subject.state()
+        state["too_tight"] = self.too_tight
+        state["framing"] = (self.normalised.framing
+                            if self.normalised is not None else None)
         state["objects"] = [d.as_dict() for d in self.detections]
         state["held"] = sorted({d.name for d in self.detections if d.in_hand})
         state.update({
@@ -251,6 +262,8 @@ class ProcessingPipeline:
 
             roles = roles_present(detections)
             held = roles_present(detections, held_only=True)
+
+            self.too_tight = bool(poses) and not candidates
 
             chosen = self.subject.update(candidates, roles=roles,
                                          held_roles=held)

@@ -399,3 +399,21 @@ YOLO_THREADS = 2
 # cropped at the waist measures about 0.5.
 LEG_ROOM_AMBIGUOUS = 1.10
 LEG_ROOM_CLEAR = 1.90
+
+# ------------------------------------------------ upper-body framing ------
+# Shoulders anchor the body frame, not the hips. On a seated or half-framed
+# crew member the shoulders are the most reliably located landmarks, while hip
+# visibility hovers near the old threshold and tipped under it constantly,
+# which is what made detection flicker on and off.
+SHOULDER_VISIBILITY_MIN = 0.55
+MIN_SHOULDER_WIDTH = 0.035        # smaller than this is too far away to use
+HIP_VISIBILITY_MIN = 0.50         # below this the hips are reconstructed
+
+# Torso length as a multiple of shoulder width, used to place the hips when
+# they cannot be seen. Measured on real full-body poses where the hips WERE
+# clearly visible: 1.60 on a reference photo, 1.51 on a live capture.
+TORSO_PER_SHOULDER = 1.55
+
+# Both wrists visible means the whole of both arms is in shot, which is a
+# good deal more to work with than head and shoulders alone.
+WRIST_VISIBILITY_MIN = 0.55

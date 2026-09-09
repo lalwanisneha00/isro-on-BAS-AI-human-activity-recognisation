@@ -33,10 +33,12 @@ class NormalisedPose:
     """One frame of pose, expressed in the body-local frame of reference."""
 
     __slots__ = ("timestamp", "points", "hip_center", "torso_length",
-                 "spine_angle", "confidence", "visibility")
+                 "spine_angle", "confidence", "visibility",
+                 "hips_estimated", "framing")
 
     def __init__(self, timestamp, points, hip_center, torso_length,
-                 spine_angle, confidence, visibility=None):
+                 spine_angle, confidence, visibility=None,
+                 hips_estimated=False, framing="full"):
         self.timestamp = timestamp
         self.points = points              # (33, 2) torso-relative coordinates
         self.hip_center = hip_center      # raw image position, for reference
@@ -48,6 +50,14 @@ class NormalisedPose:
         # and posture detection has to tell those two apart.
         self.visibility = (visibility if visibility is not None
                            else np.ones(len(points), dtype=np.float32))
+        # True when the hips were inferred from the shoulders rather than
+        # seen. Everything downstream is measured in torso lengths, so it
+        # matters whether that scale was measured or reconstructed.
+        self.hips_estimated = hips_estimated
+        # "full"  - legs in shot, posture can be measured outright
+        # "upper" - torso and both arms, the ordinary webcam view
+        # "torso" - head, shoulders and part of the arms only
+        self.framing = framing
 
 
 def normalise(landmarks, frame_width: int, frame_height: int):
@@ -71,31 +81,91 @@ def normalise(landmarks, frame_width: int, frame_height: int):
     if anchor_confidence < config.LANDMARK_VISIBILITY_THRESHOLD:
         return None
 
-    # A detection has to look like a body before it is trusted. Without this,
-    # a weak false positive becomes a tracked crew member with its own
-    # skeleton and its own entries in the mission log.
-    if float(np.mean(visibility)) < config.MIN_MEAN_VISIBILITY:
+    # A detection has to look like a body before it is trusted. The checks
+    # below deliberately look at the UPPER body only. Judging a pose on all
+    # 33 landmarks fails the ordinary webcam view, where the legs are out of
+    # shot: the model still emits them, guessed, with near-zero visibility,
+    # and they drag the whole-body averages down until a perfectly good
+    # upper-body pose is thrown away.
+    upper = list(range(0, 25))
+    if float(np.mean(visibility[upper])) < config.MIN_MEAN_VISIBILITY:
         return None
 
-    outside = np.mean((raw[:, 0] < -0.15) | (raw[:, 0] > aspect + 0.15)
-                      | (raw[:, 1] < -0.15) | (raw[:, 1] > 1.15))
+    outside = np.mean((raw[upper, 0] < -0.15) | (raw[upper, 0] > aspect + 0.15)
+                      | (raw[upper, 1] < -0.15) | (raw[upper, 1] > 1.15))
     if float(outside) > config.MAX_OUT_OF_FRAME:
         return None
 
-    hip_center = _midpoint(raw, config.LM_LEFT_HIP, config.LM_RIGHT_HIP)
-    shoulder_center = _midpoint(raw, config.LM_LEFT_SHOULDER, config.LM_RIGHT_SHOULDER)
+    # Shoulders are the anchor, not the hips. They are the most reliably
+    # located landmarks on a seated or half-framed person, and requiring the
+    # hips is what made detection flicker: their visibility hovers around the
+    # threshold and tips under it on any small change.
+    shoulder_visibility = float(np.mean([visibility[config.LM_LEFT_SHOULDER],
+                                         visibility[config.LM_RIGHT_SHOULDER]]))
+    if shoulder_visibility < config.SHOULDER_VISIBILITY_MIN:
+        return None
+
+    shoulder_center = _midpoint(raw, config.LM_LEFT_SHOULDER,
+                                config.LM_RIGHT_SHOULDER)
+    shoulder_width = float(np.linalg.norm(raw[config.LM_LEFT_SHOULDER]
+                                          - raw[config.LM_RIGHT_SHOULDER]))
+    if shoulder_width < config.MIN_SHOULDER_WIDTH:
+        return None                      # too small or too far to work with
+
+    hip_visibility = float(np.mean([visibility[config.LM_LEFT_HIP],
+                                    visibility[config.LM_RIGHT_HIP]]))
+    leg_visibility = float(np.mean([visibility[i] for i in (25, 26, 27, 28)]))
+
+    hips_estimated = hip_visibility < config.HIP_VISIBILITY_MIN
+
+    if hips_estimated:
+        # The hips were not seen. MediaPipe still reports a position for them,
+        # but it is a guess that jumps between frames, and since torso length
+        # is measured from it the whole unit of scale jumped with it.
+        #
+        # A reconstructed hip is steadier than a guessed one: human torsos are
+        # a fairly fixed multiple of shoulder width, so the shoulders - which
+        # ARE clearly visible - can place the hips. The direction is the
+        # perpendicular to the shoulder line, pointed away from the head.
+        along = raw[config.LM_LEFT_SHOULDER] - raw[config.LM_RIGHT_SHOULDER]
+        length = float(np.linalg.norm(along))
+        if length < 1e-6:
+            return None
+        down = np.array([-along[1], along[0]], dtype=np.float32) / length
+        if float(np.dot(down, shoulder_center - raw[0])) < 0:
+            down = -down                 # point away from the nose, not at it
+
+        torso_length = shoulder_width * config.TORSO_PER_SHOULDER
+        hip_center = shoulder_center + down * torso_length
+
+        # How much of the crew member is actually in shot decides how much can
+        # honestly be said about them. Both arms in view is a good deal more
+        # to work with than a head and shoulders.
+        wrist_visibility = float(np.mean([visibility[15], visibility[16]]))
+        framing = ("upper" if wrist_visibility >= config.WRIST_VISIBILITY_MIN
+                   else "torso")
+    else:
+        hip_center = _midpoint(raw, config.LM_LEFT_HIP, config.LM_RIGHT_HIP)
+        spine = shoulder_center - hip_center
+        torso_length = float(np.linalg.norm(spine))
+        if torso_length < config.MIN_TORSO_LENGTH:
+            return None
+        framing = ("full" if leg_visibility >= config.LEG_VISIBILITY_MIN
+                   else "upper")
+
+        # Human proportions: shoulders are neither a point nor several torsos
+        # wide. Only meaningful when the hips were actually measured.
+        ratio = shoulder_width / torso_length
+        if not (config.MIN_SHOULDER_RATIO <= ratio <= config.MAX_SHOULDER_RATIO):
+            return None
 
     spine = shoulder_center - hip_center
     torso_length = float(np.linalg.norm(spine))
     if torso_length < config.MIN_TORSO_LENGTH:
-        return None                      # person too far away or badly occluded
-
-    # Human proportions: shoulders are neither a point nor several torsos wide.
-    shoulder_width = float(np.linalg.norm(raw[config.LM_LEFT_SHOULDER]
-                                          - raw[config.LM_RIGHT_SHOULDER]))
-    ratio = shoulder_width / torso_length
-    if not (config.MIN_SHOULDER_RATIO <= ratio <= config.MAX_SHOULDER_RATIO):
         return None
+
+    anchor_confidence = max(shoulder_visibility,
+                            (shoulder_visibility + hip_visibility) / 2.0)
 
     # 1. translate to the hip origin, 2. divide out the torso scale
     centred = (raw - hip_center) / torso_length
@@ -117,6 +187,8 @@ def normalise(landmarks, frame_width: int, frame_height: int):
         spine_angle=spine_angle,
         confidence=anchor_confidence,
         visibility=visibility,
+        hips_estimated=hips_estimated,
+        framing=framing,
     )
 
 

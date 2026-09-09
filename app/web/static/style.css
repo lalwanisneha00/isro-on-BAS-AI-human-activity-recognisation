@@ -1214,3 +1214,18 @@ a:focus-visible {
   background: rgba(255, 255, 255, 0.03);
   color: var(--text-dim);
 }
+
+/* What the camera can actually see of the crew member. Saying so turns a
+   half-framed reading from something that looks broken into something the
+   viewer can act on by moving the camera. */
+.framing-note {
+  margin: 9px 0 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--panel-edge);
+  font-size: 9px;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: #4E5C75;
+}
+
+.framing-note.tight { color: var(--alert); }

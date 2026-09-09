@@ -199,6 +199,7 @@ const lockLabelEl = document.getElementById("lock-label");
 const subjectEmptyEl = document.getElementById("subject-empty");
 const subjectBodyEl = document.getElementById("subject-body");
 const subjectActivityEl = document.getElementById("subject-activity");
+const framingNoteEl = document.getElementById("framing-note");
 const postureChipEl = document.getElementById("posture-chip");
 const postureTextEl = document.getElementById("posture-text");
 const subjectConfEl = document.getElementById("subject-conf");
@@ -271,11 +272,33 @@ function renderSubject(data) {
   lockLabelEl.textContent = locked && visible ? "SUBJECT LOCKED"
     : locked ? "HOLDING LOCK" : "NO SUBJECT";
 
+  // How much of the crew member is in shot, in plain words.
+  const FRAMING = {
+    full: "Full body in shot",
+    upper: "Upper body and both arms in shot",
+    torso: "Head, shoulders and part of the arms in shot",
+  };
+  if (data.too_tight) {
+    framingNoteEl.hidden = false;
+    framingNoteEl.className = "framing-note mono tight";
+    framingNoteEl.textContent =
+      "Crew member too close - move back so the shoulders are in shot";
+  } else if (locked && FRAMING[data.framing]) {
+    framingNoteEl.hidden = false;
+    framingNoteEl.className = "framing-note mono";
+    framingNoteEl.textContent = FRAMING[data.framing];
+  } else {
+    framingNoteEl.hidden = true;
+  }
+
   subjectEmptyEl.hidden = locked;
   subjectBodyEl.hidden = !locked;
   actPanelEl.classList.toggle("alert", !!data.is_anomaly);
 
   if (!locked) {
+    subjectEmptyEl.textContent = data.too_tight
+      ? "Crew member visible, but too little of them is in shot"
+      : "No crew member in frame";
     postureChipEl.hidden = true;
     renderScores(null, null);
     return;

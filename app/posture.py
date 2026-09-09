@@ -72,7 +72,7 @@ class PostureReading:
 
     __slots__ = ("posture", "confidence", "seated", "knee_angle",
                  "hip_above_ankle", "lower_body_visible", "hip_stability",
-                 "spine_upright", "leg_room", "basis")
+                 "spine_upright", "leg_room", "framing", "basis")
 
     def as_dict(self) -> dict:
         return {
@@ -86,6 +86,7 @@ class PostureReading:
             "hip_stability": round(self.hip_stability, 4),
             "spine_upright": round(self.spine_upright, 1),
             "leg_room": round(self.leg_room, 2),
+            "framing": self.framing,
             "basis": self.basis,
         }
 
@@ -101,6 +102,7 @@ def _blank(basis: str) -> PostureReading:
     reading.hip_stability = 0.0
     reading.spine_upright = 0.0
     reading.leg_room = 0.0
+    reading.framing = "unknown"
     reading.basis = basis
     return reading
 
@@ -114,6 +116,7 @@ def read(window) -> PostureReading:
     frames = window.frames
     if len(frames) < 3:
         return _blank("not enough frames")
+    latest_pose = frames[-1]
 
     points = np.stack([f.points for f in frames])          # (N, 33, 2)
     latest = points[-1]
@@ -145,6 +148,14 @@ def read(window) -> PostureReading:
         for f in frames[-8:]
     ]))
     reading.lower_body_visible = leg_visibility >= config.LEG_VISIBILITY_MIN
+    reading.framing = latest_pose.framing
+
+    # The frame-room test below asks whether legs SHOULD have been visible in
+    # the space under the hips. That question only means anything when the hip
+    # position was measured. Where the hips were reconstructed from the
+    # shoulders, the answer would be about where this code chose to put them,
+    # not about the crew member.
+    hips_measured = not latest_pose.hips_estimated
 
     hip_mid = (latest[L_HIP] + latest[R_HIP]) / 2.0
     ankles = [latest[L_ANKLE], latest[R_ANKLE]]
@@ -204,7 +215,7 @@ def read(window) -> PostureReading:
         upright = _falling(reading.spine_upright, config.UPRIGHT_TOLERANCE,
                            config.UPRIGHT_TOLERANCE * 2.5)
 
-        if reading.leg_room >= config.LEG_ROOM_AMBIGUOUS:
+        if hips_measured and reading.leg_room >= config.LEG_ROOM_AMBIGUOUS:
             # There is clear frame below the hips where standing legs would
             # have appeared, and nothing appeared in it. The legs are folded,
             # not cropped: this is sitting, and it is close to a measurement.
@@ -224,7 +235,9 @@ def read(window) -> PostureReading:
             # Hips that do not travel and a torso that stays upright mean
             # settled, whether they are in a chair or in foot restraints.
             score = (0.62 * settled + 0.38 * upright) * 0.72
-            reading.basis = ("upper body only - settled at a workstation "
+            seen = ("head, shoulders and part of the arms"
+                    if reading.framing == "torso" else "upper body and arms")
+            reading.basis = (f"{seen} in shot - settled at a workstation "
                              "(sitting cannot be separated from standing "
                              "without the legs)")
 
